@@ -1884,6 +1884,14 @@ flowchart TD
     E --> F[Compose 渲染]
 ```
 
+```mermaid
+flowchart LR
+    A[输入] -->|解析| B(Parser)
+    B -->|生成| C{判断类型}
+    C -->|块级| D[BlockNode]
+    C -->|行内| E[InlineNode]
+```
+
 ```plantuml
 @startuml
 actor User

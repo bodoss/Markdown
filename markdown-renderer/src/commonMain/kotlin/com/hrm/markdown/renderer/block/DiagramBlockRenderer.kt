@@ -2,30 +2,26 @@ package com.hrm.markdown.renderer.block
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.hrm.markdown.parser.ast.DiagramBlock
 import com.hrm.markdown.renderer.LocalMarkdownTheme
+import com.hrm.markdown.renderer.diagram.DiagramFallback
+import com.hrm.markdown.renderer.diagram.MermaidFlowchartDiagram
+import com.hrm.markdown.renderer.diagram.PlantUMLSequenceDiagram
 
 /**
  * 图表块渲染器（Mermaid / PlantUML 等）。
  *
- * 由于在 Compose Multiplatform 中无法直接嵌入 Mermaid/PlantUML 渲染引擎，
- * 这里以美观的占位方式展示图表代码，标注图表类型，方便后续集成 WebView 或其他引擎。
+ * 根据图表类型分发到对应的渲染引擎：
+ * - Mermaid flowchart/graph → Canvas 绘制流程图
+ * - PlantUML sequence → Canvas 绘制时序图
+ * - 其他未支持类型 → 代码展示 fallback
  */
 @Composable
 internal fun DiagramBlockRenderer(
@@ -33,43 +29,46 @@ internal fun DiagramBlockRenderer(
     modifier: Modifier = Modifier,
 ) {
     val theme = LocalMarkdownTheme.current
-    val typeName = node.diagramType.replaceFirstChar {
-        if (it.isLowerCase()) it.titlecase() else it.toString()
-    }
+    val code = node.literal.trimEnd('\n')
+    val diagramType = node.diagramType.lowercase()
 
     Column(
         modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(theme.codeBlockCornerRadius))
-            .background(Color(0xFFF0F4F8))
+            .background(Color(0xFFF8FAFC))
             .padding(theme.codeBlockPadding),
     ) {
-        // 图表类型标签
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(bottom = 8.dp),
-        ) {
-            Text(
-                text = "📊",
-                modifier = Modifier.padding(end = 6.dp),
-            )
-            Text(
-                text = "$typeName Diagram",
-                style = theme.bodyStyle.copy(
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    color = Color(0xFF57606A),
-                ),
-            )
+        when {
+            diagramType == "mermaid" -> {
+                // 判断是 flowchart / graph / sequence 等
+                val firstLine = code.lines().firstOrNull()?.trim()?.lowercase() ?: ""
+                when {
+                    firstLine.startsWith("flowchart") || firstLine.startsWith("graph") -> {
+                        MermaidFlowchartDiagram(code)
+                    }
+                    firstLine.startsWith("sequencediagram") || firstLine.startsWith("sequence") -> {
+                        // Mermaid sequence → 复用 PlantUML 风格（后续可独立实现）
+                        MermaidFlowchartDiagram(code)
+                    }
+                    else -> {
+                        // 尝试解析为 flowchart，失败则 fallback
+                        MermaidFlowchartDiagram(code)
+                    }
+                }
+            }
+            diagramType == "plantuml" -> {
+                PlantUMLSequenceDiagram(code)
+            }
+            diagramType in setOf("dot", "graphviz") -> {
+                DiagramFallback(code, "Graphviz")
+            }
+            else -> {
+                val typeName = node.diagramType.replaceFirstChar {
+                    if (it.isLowerCase()) it.titlecase() else it.toString()
+                }
+                DiagramFallback(code, typeName)
+            }
         }
-
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // 图表源代码
-        Text(
-            text = node.literal.trimEnd('\n'),
-            style = theme.codeBlockStyle.copy(fontFamily = FontFamily.Monospace),
-            modifier = Modifier.fillMaxWidth(),
-        )
     }
 }

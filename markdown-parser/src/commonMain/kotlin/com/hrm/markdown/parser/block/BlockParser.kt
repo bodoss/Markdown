@@ -18,6 +18,10 @@ import com.hrm.markdown.parser.core.SourceText
  *
  * 此设计支持高效的增量解析：仅需重新解析脏块，
  * 且行内解析是延迟执行的。
+ *
+ * 块开启逻辑委托给 [BlockStarters]，
+ * 后处理逻辑委托给 [PostProcessors]，
+ * 表格行解析委托给 [TableParser]。
  */
 class BlockParser(
     private val source: SourceText,
@@ -27,23 +31,7 @@ class BlockParser(
     private val openBlocks = mutableListOf<OpenBlock>()
     private var currentLine = 0
 
-    /**
-     * 表示解析过程中一个已打开（尚未关闭）的块。
-     */
-    private class OpenBlock(
-        val node: Node,
-        var lastLineIndex: Int = 0,
-        var contentLines: MutableList<String> = mutableListOf(),
-        var contentStartLine: Int = 0,
-    ) {
-        var paragraphContent: StringBuilder? = null
-        var isFenced: Boolean = false
-        var fenceChar: Char = ' '
-        var fenceLength: Int = 0
-        var fenceIndent: Int = 0
-        var htmlType: Int = 0
-        var blankLineCount: Int = 0
-    }
+    private val starters = BlockStarters(source)
 
     /**
      * 行内解析的接口，用于后续注入。
@@ -89,17 +77,11 @@ class BlockParser(
         // 解析行内内容
         parseInlineContent(document)
 
-        // 后处理：自动生成标题 ID
-        generateHeadingIds(document)
-
-        // 后处理：GFM 过滤禁止的 HTML 标签
-        filterDisallowedHtml(document)
-
-        // 后处理：缩写替换
-        applyAbbreviations(document)
-
-        // 后处理：围栏代码块 → 图表块转换
-        convertDiagramBlocks(document)
+        // 后处理
+        PostProcessors.generateHeadingIds(document)
+        PostProcessors.filterDisallowedHtml(document)
+        PostProcessors.applyAbbreviations(document)
+        PostProcessors.convertDiagramBlocks(document)
 
         return document
     }
@@ -176,12 +158,17 @@ class BlockParser(
             if (lastMatched.isFenced) break // 在围栏代码块内部，不开启新块
 
             // 按优先级顺序尝试各种块开启
-            val newBlock = tryStartBlock(cursor, lineIdx, lastMatched)
+            val newBlock = starters.tryStartBlock(cursor, lineIdx, lastMatched)
             if (newBlock != null) {
                 // 如果当前是段落且新块不能中断段落
-                if (lastMatched.paragraphContent != null && !canInterruptParagraph(newBlock.node, cursor)) {
+                if (lastMatched.paragraphContent != null && !starters.canInterruptParagraph(newBlock.node, cursor)) {
                     // 不开启新块，添加到段落
                     break
+                }
+
+                // 处理列表项的特殊逻辑：确保 ListBlock 存在
+                if (newBlock.node is ListItem) {
+                    ensureListBlock(newBlock, lineIdx)
                 }
 
                 // 如果当前是 ListBlock 且新块不是 ListItem，
@@ -259,6 +246,41 @@ class BlockParser(
 
         // 第四阶段：将行添加到当前块
         addLineToTip(lastMatched, cursor, lineIdx)
+    }
+
+    /**
+     * 确保 openBlocks 中存在匹配的 ListBlock。
+     * 如果不存在或不匹配，创建新的 ListBlock。
+     * 这与原始 tryStartListItem 内部操作 openBlocks 的行为一致。
+     */
+    private fun ensureListBlock(newBlock: OpenBlock, lineIdx: Int) {
+        val listItem = newBlock.node as ListItem
+        val meta = newBlock.listItemMeta ?: return
+
+        val parentOb = if (openBlocks.isNotEmpty()) openBlocks.last() else null
+        val parentList = parentOb?.node as? ListBlock
+
+        if (parentList == null || !listsMatch(parentList, meta.ordered, meta.bulletChar, meta.delimiter)) {
+            // 如果存在不匹配的列表，先关闭它
+            if (parentList != null && !listsMatch(parentList, meta.ordered, meta.bulletChar, meta.delimiter)) {
+                finalizeBlock(parentOb)
+                openBlocks.removeAt(openBlocks.size - 1)
+            }
+
+            // 创建新列表
+            val list = ListBlock(
+                ordered = meta.ordered,
+                bulletChar = meta.bulletChar,
+                startNumber = meta.startNumber,
+                delimiter = meta.delimiter
+            )
+            list.lineRange = LineRange(lineIdx, lineIdx + 1)
+
+            val container = findNearestContainer()
+            container.appendChild(list)
+            val listOb = OpenBlock(list, contentStartLine = lineIdx, lastLineIndex = lineIdx)
+            openBlocks.add(listOb)
+        }
     }
 
     /**
@@ -447,424 +469,12 @@ class BlockParser(
         }
     }
 
-    private fun canInterruptParagraph(node: Node, cursor: LineCursor): Boolean {
-        return when (node) {
-            is Heading -> true
-            is ThematicBreak -> true
-            is BlockQuote -> true
-            is FencedCodeBlock -> true
-            is HtmlBlock -> node.htmlType in 1..6
-            is ListItem -> true
-            is IndentedCodeBlock -> false // 不能中断段落
-            is Table -> true // 表格的 header 来自段落内容，属于段落转换而非打断
-            is MathBlock -> true
-            is DefinitionDescription -> true // 定义描述可以将段落转换为定义术语
-            is CustomContainer -> true // 自定义容器可以打断段落
-            else -> true
-        }
-    }
-
-    /**
-     * 从当前游标位置尝试开启新块。
-     */
-    private fun tryStartBlock(cursor: LineCursor, lineIdx: Int, tip: OpenBlock): OpenBlock? {
-        val snap = cursor.snapshot()
-
-        // 文档开头的前置元数据
-        if (lineIdx == 0) {
-            tryStartFrontMatter(cursor, lineIdx)?.let { return it }
-            cursor.restore(snap)
-        }
-
-        // Setext 标题（根据 CommonMark 规范必须在主题分隔线之前检查，
-        // 因为当前面有段落内容时 Setext 标题优先级更高）
-        tryStartSetextHeading(cursor, lineIdx, tip)?.let { return it }
-        cursor.restore(snap)
-
-        // ATX 标题
-        tryStartAtxHeading(cursor, lineIdx)?.let { return it }
-        cursor.restore(snap)
-
-        // 表格（在段落行后检查分隔行 - 在主题分隔线之前，
-        // 使得 `| A |\n| --- |` 被解析为表格而非主题分隔线）
-        tryStartTable(cursor, lineIdx, tip)?.let { return it }
-        cursor.restore(snap)
-
-        // 主题分隔线（必须在列表项之前检查）
-        tryStartThematicBreak(cursor, lineIdx)?.let { return it }
-        cursor.restore(snap)
-
-        // 自定义容器 (::: syntax)
-        tryStartCustomContainer(cursor, lineIdx)?.let { return it }
-        cursor.restore(snap)
-
-        // 围栏代码块
-        tryStartFencedCodeBlock(cursor, lineIdx)?.let { return it }
-        cursor.restore(snap)
-
-        // 数学块 ($$)
-        tryStartMathBlock(cursor, lineIdx)?.let { return it }
-        cursor.restore(snap)
-
-        // HTML 块
-        tryStartHtmlBlock(cursor, lineIdx)?.let { return it }
-        cursor.restore(snap)
-
-        // 块引用
-        tryStartBlockQuote(cursor, lineIdx)?.let { return it }
-        cursor.restore(snap)
-
-        // 列表项
-        tryStartListItem(cursor, lineIdx, tip)?.let { return it }
-        cursor.restore(snap)
-
-        // 脚注定义
-        tryStartFootnoteDefinition(cursor, lineIdx)?.let { return it }
-        cursor.restore(snap)
-
-        // 定义列表
-        tryStartDefinitionDescription(cursor, lineIdx, tip)?.let { return it }
-        cursor.restore(snap)
-
-        // 缩进代码块（必须在列表项检查之后）
-        tryStartIndentedCodeBlock(cursor, lineIdx, tip)?.let { return it }
-        cursor.restore(snap)
-
-        return null
-    }
-
-    // ────── 块开启器 ──────
-
-    private fun tryStartAtxHeading(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd || cursor.peek() != '#') return null
-
-        var level = 0
-        while (!cursor.isAtEnd && cursor.peek() == '#') {
-            cursor.advance()
-            level++
-        }
-        if (level > 6) return null
-        if (!cursor.isAtEnd && cursor.peek() != ' ' && cursor.peek() != '\t') {
-            if (!cursor.isAtEnd) return null // `#heading` without space is not a heading
-        }
-
-        // 跳过 # 后面的空格
-        if (!cursor.isAtEnd && (cursor.peek() == ' ' || cursor.peek() == '\t')) {
-            cursor.advance()
-        }
-
-        // 获取内容，去除可选的尾部 #
-        var content = cursor.rest().trimEnd()
-        val customId = extractCustomId(content)
-        if (customId != null) {
-            content = content.replace(CUSTOM_ID_STRIP_REGEX, "").trimEnd()
-        }
-        // 去除尾部 #
-        if (content.endsWith('#')) {
-            val strippedTrailing = content.trimEnd('#')
-            if (strippedTrailing.isEmpty() || strippedTrailing.endsWith(' ') || strippedTrailing.endsWith('\t')) {
-                content = strippedTrailing.trimEnd()
-            }
-        }
-
-        val heading = Heading(level)
-        heading.customId = customId
-        heading.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(heading, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        ob.contentLines.add(content)
-        return ob
-    }
-
-    private fun extractCustomId(content: String): String? {
-        val match = CUSTOM_ID_REGEX.find(content) ?: return null
-        return match.groupValues[1]
-    }
-
-    private fun tryStartSetextHeading(cursor: LineCursor, lineIdx: Int, tip: OpenBlock): OpenBlock? {
-        if (tip.paragraphContent == null) return null
-
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd) return null
-
-        val c = cursor.peek()
-        if (c != '=' && c != '-') return null
-
-        // 所有剩余字符必须是同一个字符（加上尾部空格）
-        val rest = cursor.rest()
-        val stripped = rest.trimEnd()
-        if (!stripped.all { it == c }) return null
-        if (stripped.isEmpty()) return null
-
-        val level = if (c == '=') 1 else 2
-        val heading = SetextHeading(level)
-        heading.lineRange = LineRange(tip.contentStartLine, lineIdx + 1)
-
-        val ob = OpenBlock(heading, contentStartLine = tip.contentStartLine, lastLineIndex = lineIdx)
-        ob.contentLines.addAll(tip.paragraphContent.toString().split('\n'))
-        return ob
-    }
-
-    private fun tryStartThematicBreak(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd) return null
-
-        val c = cursor.peek()
-        if (c != '-' && c != '*' && c != '_') return null
-
-        var count = 0
-        val rest = cursor.rest()
-        for (ch in rest) {
-            when (ch) {
-                c -> count++
-                ' ', '\t' -> {} // 之间允许空格
-                else -> return null
-            }
-        }
-
-        if (count < 3) return null
-
-        val tb = ThematicBreak(c)
-        tb.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(tb, lastLineIndex = lineIdx)
-        return ob
-    }
-
-    private fun tryStartFencedCodeBlock(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd) return null
-
-        val c = cursor.peek()
-        if (c != '`' && c != '~') return null
-
-        var fenceLength = 0
-        while (!cursor.isAtEnd && cursor.peek() == c) {
-            cursor.advance()
-            fenceLength++
-        }
-        if (fenceLength < 3) return null
-
-        // 信息字符串（反引号围栏的信息中不允许包含反引号）
-        val info = cursor.rest().trim()
-        if (c == '`' && info.contains('`')) return null
-
-        // 消耗掉 info string 剩余部分，避免被 addLineToTip 当作代码内容
-        cursor.advance(cursor.remaining)
-
-        val language = info.split(INFO_LANG_SPLIT_REGEX).firstOrNull()?.trim() ?: ""
-
-        val block = FencedCodeBlock(
-            info = info,
-            language = language,
-            fenceChar = c,
-            fenceLength = fenceLength,
-            fenceIndent = indent
-        )
-        block.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(block, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        ob.isFenced = true
-        ob.fenceChar = c
-        ob.fenceLength = fenceLength
-        ob.fenceIndent = indent
-        return ob
-    }
-
     private fun isClosingFence(line: String, fenceChar: Char, openLength: Int): Boolean {
         val trimmed = line.trim()
         if (trimmed.isEmpty()) return false
         if (trimmed[0] != fenceChar) return false
         if (!trimmed.all { it == fenceChar }) return false
         return trimmed.length >= openLength
-    }
-
-    private fun tryStartIndentedCodeBlock(cursor: LineCursor, lineIdx: Int, tip: OpenBlock): OpenBlock? {
-        // 缩进代码块不能中断段落
-        if (tip.paragraphContent != null) return null
-        // 必须有 4 个空格
-        val indent = cursor.advanceSpaces()
-        if (indent < 4) return null
-
-        val block = IndentedCodeBlock()
-        block.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(block, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        return ob
-    }
-
-    private fun tryStartBlockQuote(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd || cursor.peek() != '>') return null
-
-        cursor.advance() // 跳过 '>'
-        if (!cursor.isAtEnd && cursor.peek() == ' ') {
-            cursor.advance() // 跳过可选空格
-        }
-
-        val bq = BlockQuote()
-        bq.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(bq, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        return ob
-    }
-
-    private fun tryStartListItem(cursor: LineCursor, lineIdx: Int, tip: OpenBlock): OpenBlock? {
-        val snap = cursor.snapshot()
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd) return null
-
-        val c = cursor.peek()
-        var ordered = false
-        var bulletChar = c
-        var startNumber = 1
-        var delimiter = '.'
-        var markerWidth = 0
-
-        when (c) {
-            '-', '*', '+' -> {
-                cursor.advance()
-                markerWidth = 1
-            }
-            in '0'..'9' -> {
-                ordered = true
-                val numBuilder = StringBuilder()
-                while (!cursor.isAtEnd && cursor.peek() in '0'..'9' && numBuilder.length < 9) {
-                    numBuilder.append(cursor.advance())
-                }
-                if (cursor.isAtEnd) return null
-                val d = cursor.peek()
-                if (d != '.' && d != ')') return null
-                delimiter = d
-                cursor.advance()
-                startNumber = numBuilder.toString().toIntOrNull() ?: return null
-                markerWidth = numBuilder.length + 1
-            }
-            else -> return null
-        }
-
-        // 必须后跟空格/制表符或行尾
-        if (!cursor.isAtEnd && cursor.peek() != ' ' && cursor.peek() != '\t') return null
-
-        // 消耗标记后的一个空格（或使用行尾标记）
-        val contentIndent = indent + markerWidth + if (!cursor.isAtEnd) {
-            // 消耗标记后的空格（1 到 4 个用于内容缩进）
-            val postMarker = cursor.advanceSpaces(4)
-            if (postMarker == 0) 1 else postMarker
-        } else {
-            1
-        }
-
-        // 检查任务列表
-        var isTask = false
-        var checked = false
-        if (!cursor.isAtEnd) {
-            val taskSnap = cursor.snapshot()
-            if (cursor.peek() == '[') {
-                cursor.advance()
-                if (!cursor.isAtEnd) {
-                    val mark = cursor.peek()
-                    if (mark == ' ' || mark == 'x' || mark == 'X') {
-                        cursor.advance()
-                        if (!cursor.isAtEnd && cursor.peek() == ']') {
-                            cursor.advance()
-                            if (cursor.isAtEnd || cursor.peek() == ' ' || cursor.peek() == '\t') {
-                                isTask = true
-                                checked = mark == 'x' || mark == 'X'
-                                if (!cursor.isAtEnd) cursor.advance() // 跳过 ] 后的空格
-                            } else {
-                                cursor.restore(taskSnap)
-                            }
-                        } else {
-                            cursor.restore(taskSnap)
-                        }
-                    } else {
-                        cursor.restore(taskSnap)
-                    }
-                } else {
-                    cursor.restore(taskSnap)
-                }
-            }
-        }
-
-        val listItem = ListItem(
-            markerIndent = indent,
-            contentIndent = contentIndent
-        )
-        listItem.taskListItem = isTask
-        listItem.checked = checked
-        listItem.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        // 检查是否需要创建新列表或添加到现有列表
-        val parentOb = if (openBlocks.isNotEmpty()) openBlocks.last() else null
-        val parentList = parentOb?.node as? ListBlock
-
-        if (parentList == null || !listsMatch(parentList, ordered, bulletChar, delimiter)) {
-            // 如果存在不匹配的列表，先关闭它
-            if (parentList != null && !listsMatch(parentList, ordered, bulletChar, delimiter)) {
-                finalizeBlock(parentOb)
-                openBlocks.removeAt(openBlocks.size - 1)
-            }
-
-            // 创建新列表
-            val list = ListBlock(
-                ordered = ordered,
-                bulletChar = bulletChar,
-                startNumber = startNumber,
-                delimiter = delimiter
-            )
-            list.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-            val container = findNearestContainer()
-            container.appendChild(list)
-            val listOb = OpenBlock(list, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-            openBlocks.add(listOb)
-        }
-
-        val ob = OpenBlock(listItem, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        return ob
-    }
-
-    private fun listsMatch(list: ListBlock, ordered: Boolean, bulletChar: Char, delimiter: Char): Boolean {
-        if (list.ordered != ordered) return false
-        if (ordered) return list.delimiter == delimiter
-        return list.bulletChar == bulletChar
-    }
-
-    private fun tryStartHtmlBlock(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd || cursor.peek() != '<') return null
-
-        val rest = cursor.rest()
-        val htmlType = detectHtmlBlockType(rest) ?: return null
-
-        val block = HtmlBlock(htmlType = htmlType)
-        block.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(block, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        ob.htmlType = htmlType
-        return ob
-    }
-
-    private fun detectHtmlBlockType(line: String): Int? {
-        val lower = line.lowercase()
-        // 类型 1：<script>、<pre>、<style>、<textarea>
-        if (HTML_TYPE1_REGEX.containsMatchIn(line)) return 1
-        // 类型 2：<!-- 注释
-        if (lower.startsWith("<!--")) return 2
-        // 类型 3：<? 处理指令
-        if (lower.startsWith("<?")) return 3
-        // 类型 4：<!声明
-        if (HTML_TYPE4_REGEX.containsMatchIn(line)) return 4
-        // 类型 5：CDATA
-        if (lower.startsWith("<![cdata[")) return 5
-        // 类型 6：已知块级标签
-        val tagMatch = HTML_TYPE6_TAG_REGEX.find(line)
-        if (tagMatch != null && tagMatch.groupValues[1].lowercase() in BLOCK_TAGS) return 6
-        // 类型 7：其他标签（开标签或闭标签）
-        if (HTML_TYPE7_REGEX.containsMatchIn(line)) return 7
-        return null
     }
 
     private fun checkHtmlBlockEnd(line: String, htmlType: Int): Boolean {
@@ -881,289 +491,10 @@ class BlockParser(
         }
     }
 
-    private fun tryStartTable(cursor: LineCursor, lineIdx: Int, tip: OpenBlock): OpenBlock? {
-        if (tip.paragraphContent == null) return null
-        val headerLine = tip.paragraphContent.toString().trim()
-        if (!headerLine.contains('|')) return null
-        // 检查当前行是否为有效的分隔行
-        val delimLine = cursor.rest().trim()
-        val alignments = parseTableDelimiterRow(delimLine) ?: return null
-        val headerCells = parseTableRow(headerLine)
-        if (headerCells.isEmpty()) return null
-
-        val table = Table()
-        table.columnAlignments = alignments
-        table.lineRange = LineRange(tip.contentStartLine, lineIdx + 1)
-
-        val head = TableHead()
-        val headerRow = TableRow()
-        // 列数以分隔行为准：多余截断，不足补空
-        val colCount = alignments.size
-        for (i in 0 until colCount) {
-            val cellContent = headerCells.getOrElse(i) { "" }
-            val align = alignments[i]
-            val cell = TableCell(alignment = align, isHeader = true)
-            cell.lineRange = LineRange(tip.contentStartLine, tip.contentStartLine + 1)
-            cell.rawContent = cellContent
-            headerRow.appendChild(cell)
-        }
-        head.appendChild(headerRow)
-        table.appendChild(head)
-
-        val body = TableBody()
-        table.appendChild(body)
-
-        val ob = OpenBlock(table, contentStartLine = tip.contentStartLine, lastLineIndex = lineIdx)
-        ob.contentLines.clear()
-        return ob
-    }
-
-    private fun parseTableDelimiterRow(line: String): List<Table.Alignment>? {
-        val trimmed = line.trim().let { if (it.startsWith('|')) it.drop(1) else it }
-            .let { if (it.endsWith('|')) it.dropLast(1) else it }
-        if (trimmed.isBlank()) return null
-
-        val cells = trimmed.split('|')
-        if (cells.isEmpty()) return null
-
-        val alignments = mutableListOf<Table.Alignment>()
-        for (cell in cells) {
-            val c = cell.trim()
-            if (!c.matches(TABLE_DELIM_CELL_REGEX)) return null
-            val left = c.startsWith(':')
-            val right = c.endsWith(':')
-            alignments.add(
-                when {
-                    left && right -> Table.Alignment.CENTER
-                    right -> Table.Alignment.RIGHT
-                    left -> Table.Alignment.LEFT
-                    else -> Table.Alignment.NONE
-                }
-            )
-        }
-        return alignments
-    }
-
-    private fun parseTableRow(line: String): List<String> {
-        val trimmed = line.trim()
-        val stripped = if (trimmed.startsWith('|')) trimmed.drop(1) else trimmed
-        val end = if (stripped.endsWith('|')) stripped.dropLast(1) else stripped
-
-        val cells = mutableListOf<String>()
-        val current = StringBuilder()
-        var escaped = false
-        for (c in end) {
-            when {
-                escaped -> {
-                    current.append(c)
-                    escaped = false
-                }
-                c == '\\' -> {
-                    current.append(c)
-                    escaped = true
-                }
-                c == '|' -> {
-                    cells.add(current.toString().trim())
-                    current.clear()
-                }
-                else -> current.append(c)
-            }
-        }
-        cells.add(current.toString().trim())
-        return cells
-    }
-
-    private fun tryStartMathBlock(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.remaining < 2) return null
-        if (cursor.peek() != '$' || cursor.peek(1) != '$') return null
-
-        cursor.advance()
-        cursor.advance()
-        val rest = cursor.rest().trim()
-        // 如果同一行有内容且以 $$ 结尾，则为单行数学块
-        if (rest.endsWith("$$") && rest.length > 2) {
-            val content = rest.dropLast(2)
-            val block = MathBlock(literal = content)
-            block.lineRange = LineRange(lineIdx, lineIdx + 1)
-            return OpenBlock(block, lastLineIndex = lineIdx)
-        }
-
-        val block = MathBlock()
-        block.lineRange = LineRange(lineIdx, lineIdx + 1)
-        val ob = OpenBlock(block, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        if (rest.isNotEmpty()) {
-            ob.contentLines.add(rest)
-        }
-        return ob
-    }
-
-    private fun tryStartFootnoteDefinition(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val snap = cursor.snapshot()
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd || cursor.peek() != '[') return null
-        cursor.advance()
-        if (cursor.isAtEnd || cursor.peek() != '^') return null
-        cursor.advance()
-
-        val label = StringBuilder()
-        while (!cursor.isAtEnd && cursor.peek() != ']') {
-            label.append(cursor.advance())
-        }
-        if (cursor.isAtEnd || label.isEmpty()) return null
-        cursor.advance() // 跳过 ']'
-        if (cursor.isAtEnd || cursor.peek() != ':') return null
-        cursor.advance() // 跳过 ':'
-
-        // 跳过可选空格
-        if (!cursor.isAtEnd && cursor.peek() == ' ') cursor.advance()
-
-        val fd = FootnoteDefinition(label = label.toString())
-        fd.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(fd, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        return ob
-    }
-
-    private fun tryStartDefinitionDescription(cursor: LineCursor, lineIdx: Int, tip: OpenBlock): OpenBlock? {
-        // 定义描述行必须紧跟段落（作为术语）或已存在的定义列表
-        if (tip.paragraphContent == null && tip.node !is DefinitionList) return null
-
-        val snap = cursor.snapshot()
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd || cursor.peek() != ':') {
-            cursor.restore(snap)
-            return null
-        }
-        cursor.advance() // 跳过 ':'
-        // 冒号后必须跟空格或 tab
-        if (cursor.isAtEnd || (cursor.peek() != ' ' && cursor.peek() != '\t')) {
-            cursor.restore(snap)
-            return null
-        }
-        cursor.advance() // 跳过空格
-
-        val desc = DefinitionDescription()
-        desc.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(desc, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        return ob
-    }
-
-    private fun tryStartFrontMatter(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val rest = cursor.rest().trim()
-        val format = when {
-            rest == "---" -> "yaml"
-            rest == "+++" -> "toml"
-            else -> return null
-        }
-
-        // 前置元数据需要在文档中某处有关闭标记。
-        // 向前查找关闭标记。
-        val closingMarker = if (format == "yaml") "---" else "+++"
-        var foundClosing = false
-        for (i in lineIdx + 1 until source.lineCount) {
-            if (source.lineContent(i).trim() == closingMarker) {
-                foundClosing = true
-                break
-            }
-        }
-        if (!foundClosing) return null
-
-        val block = FrontMatter(format = format)
-        block.lineRange = LineRange(lineIdx, lineIdx + 1)
-        val ob = OpenBlock(block, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        return ob
-    }
-
-    private fun tryStartCustomContainer(cursor: LineCursor, lineIdx: Int): OpenBlock? {
-        val indent = cursor.advanceSpaces(3)
-        if (cursor.isAtEnd) return null
-
-        if (cursor.peek() != ':') return null
-
-        // 计算连续冒号数
-        var colonCount = 0
-        val snap = cursor.snapshot()
-        while (!cursor.isAtEnd && cursor.peek() == ':') {
-            cursor.advance()
-            colonCount++
-        }
-        if (colonCount < 3) return null
-
-        // 冒号后面可以跟：类型名、属性 {.class #id}、标题 "..."
-        val rest = cursor.rest().trim()
-        cursor.advance(cursor.remaining) // 消耗剩余内容
-
-        // 解析类型、标题和属性
-        var type = ""
-        var title = ""
-        var cssClasses = emptyList<String>()
-        var cssId: String? = null
-
-        if (rest.isNotEmpty()) {
-            val parsed = parseContainerInfo(rest)
-            type = parsed.type
-            title = parsed.title
-            cssClasses = parsed.cssClasses
-            cssId = parsed.cssId
-        }
-
-        val block = CustomContainer(
-            type = type,
-            title = title,
-            cssClasses = cssClasses,
-            cssId = cssId,
-        )
-        block.lineRange = LineRange(lineIdx, lineIdx + 1)
-
-        val ob = OpenBlock(block, contentStartLine = lineIdx, lastLineIndex = lineIdx)
-        ob.fenceChar = ':'
-        ob.fenceLength = colonCount
-        ob.fenceIndent = indent
-        return ob
-    }
-
-    private data class ContainerInfo(
-        val type: String,
-        val title: String,
-        val cssClasses: List<String>,
-        val cssId: String?,
-    )
-
-    private fun parseContainerInfo(info: String): ContainerInfo {
-        var remaining = info
-        var type = ""
-        var title = ""
-        val cssClasses = mutableListOf<String>()
-        var cssId: String? = null
-
-        // 提取属性块 {.class #id key=value}
-        val attrMatch = CONTAINER_ATTR_REGEX.find(remaining)
-        if (attrMatch != null) {
-            val attrContent = attrMatch.groupValues[1]
-            // 解析 .class
-            CONTAINER_CLASS_REGEX.findAll(attrContent).forEach {
-                cssClasses.add(it.groupValues[1])
-            }
-            // 解析 #id
-            CONTAINER_ID_REGEX.find(attrContent)?.let {
-                cssId = it.groupValues[1]
-            }
-            remaining = remaining.removeRange(attrMatch.range).trim()
-        }
-
-        // 提取标题 "..." 或 '...'
-        val titleMatch = CONTAINER_TITLE_REGEX.find(remaining)
-        if (titleMatch != null) {
-            title = titleMatch.groupValues[1].ifEmpty { titleMatch.groupValues[2] }
-            remaining = remaining.removeRange(titleMatch.range).trim()
-        }
-
-        // 剩余部分是类型名
-        type = remaining.trim().split("\\s+".toRegex()).firstOrNull() ?: ""
-
-        return ContainerInfo(type, title, cssClasses, cssId)
+    private fun listsMatch(list: ListBlock, ordered: Boolean, bulletChar: Char, delimiter: Char): Boolean {
+        if (list.ordered != ordered) return false
+        if (ordered) return list.delimiter == delimiter
+        return list.bulletChar == bulletChar
     }
 
     // ────── 行处理 ──────
@@ -1211,10 +542,10 @@ class BlockParser(
             is Table -> {
                 // 跳过分隔行（创建表格时分隔行也会被传入 addLineToTip）
                 val rawLine = source.lineContent(lineIdx)
-                if (parseTableDelimiterRow(rawLine.trim()) != null) return
+                if (TableParser.parseTableDelimiterRow(rawLine.trim()) != null) return
 
                 // 作为表格行解析
-                val cells = parseTableRow(rawLine)
+                val cells = TableParser.parseTableRow(rawLine)
                 val body = node.children.filterIsInstance<TableBody>().firstOrNull() ?: return
                 val row = TableRow()
                 val alignments = node.columnAlignments
@@ -1556,6 +887,30 @@ class BlockParser(
         return remaining
     }
 
+    /**
+     * 从段落内容中提取缩写定义 `*[abbr]: Full Text`。
+     * 返回不属于缩写定义的剩余内容。
+     */
+    private fun extractAbbreviationDefs(content: String): String {
+        var remaining = content
+        while (true) {
+            val match = ABBREVIATION_DEF_REGEX.find(remaining) ?: break
+            if (match.range.first != 0) break
+
+            val abbr = match.groupValues[1]
+            val fullText = match.groupValues[2].trim()
+
+            if (abbr.isNotEmpty() && !document.abbreviationDefinitions.containsKey(abbr)) {
+                val def = AbbreviationDefinition(abbreviation = abbr, fullText = fullText)
+                document.abbreviationDefinitions[abbr] = def
+                document.appendChild(def)
+            }
+
+            remaining = remaining.substring(match.range.last + 1).trimStart('\n')
+        }
+        return remaining
+    }
+
     private fun findNearestContainer(): ContainerNode {
         for (i in openBlocks.indices.reversed()) {
             val node = openBlocks[i].node
@@ -1624,9 +979,9 @@ class BlockParser(
                     }
                     // 去除尾部 #
                     content = content.trimEnd()
-                    val customId = extractCustomId(content)
+                    val customId = starters.extractCustomId(content)
                     if (customId != null) {
-                        content = content.replace(CUSTOM_ID_STRIP_REGEX, "").trimEnd()
+                        content = content.replace(BlockStarters.CUSTOM_ID_STRIP_REGEX, "").trimEnd()
                     }
                     if (content.endsWith('#')) {
                         val t = content.trimEnd('#')
@@ -1667,264 +1022,6 @@ class BlockParser(
         }
     }
 
-    // ────── 缩写定义提取 ──────
-
-    /**
-     * 从段落内容中提取缩写定义 `*[abbr]: Full Text`。
-     * 返回不属于缩写定义的剩余内容。
-     */
-    private fun extractAbbreviationDefs(content: String): String {
-        var remaining = content
-        while (true) {
-            val match = ABBREVIATION_DEF_REGEX.find(remaining) ?: break
-            if (match.range.first != 0) break
-
-            val abbr = match.groupValues[1]
-            val fullText = match.groupValues[2].trim()
-
-            if (abbr.isNotEmpty() && !document.abbreviationDefinitions.containsKey(abbr)) {
-                val def = AbbreviationDefinition(abbreviation = abbr, fullText = fullText)
-                document.abbreviationDefinitions[abbr] = def
-                document.appendChild(def)
-            }
-
-            remaining = remaining.substring(match.range.last + 1).trimStart('\n')
-        }
-        return remaining
-    }
-
-    // ────── 后处理 ──────
-
-    /**
-     * 自动为所有标题生成 ID（slug），基于标题文本内容。
-     * 已有 customId 的标题不会被覆盖。
-     */
-    private fun generateHeadingIds(doc: Document) {
-        val usedIds = mutableMapOf<String, Int>()
-        for (child in doc.children) {
-            generateHeadingIdsRecursive(child, usedIds)
-        }
-    }
-
-    private fun generateHeadingIdsRecursive(node: Node, usedIds: MutableMap<String, Int>) {
-        when (node) {
-            is Heading -> {
-                if (node.customId == null) {
-                    val text = extractPlainText(node)
-                    val slug = generateSlug(text)
-                    node.autoId = deduplicateId(slug, usedIds)
-                } else {
-                    // 记录 customId 以避免重复
-                    usedIds[node.customId!!] = (usedIds[node.customId!!] ?: 0) + 1
-                }
-            }
-            is SetextHeading -> {
-                val text = extractPlainText(node)
-                val slug = generateSlug(text)
-                node.autoId = deduplicateId(slug, usedIds)
-            }
-            is ContainerNode -> {
-                for (child in node.children) {
-                    generateHeadingIdsRecursive(child, usedIds)
-                }
-            }
-            else -> {}
-        }
-    }
-
-    /**
-     * 从节点中提取纯文本（递归提取所有 Text 节点的内容）。
-     */
-    private fun extractPlainText(node: Node): String {
-        return when (node) {
-            is Text -> node.literal
-            is InlineCode -> node.literal
-            is Emoji -> node.literal
-            is EscapedChar -> node.literal
-            is HtmlEntity -> node.resolved.ifEmpty { node.literal }
-            is SoftLineBreak -> " "
-            is HardLineBreak -> " "
-            is ContainerNode -> node.children.joinToString("") { extractPlainText(it) }
-            else -> ""
-        }
-    }
-
-    /**
-     * 将文本转换为 URL 友好的 slug。
-     * 规则：小写化 → 非字母数字替换为连字符 → 去除首尾/连续连字符。
-     */
-    private fun generateSlug(text: String): String {
-        return text.lowercase()
-            .replace(Regex("[^\\w\\u4e00-\\u9fff-]"), "-")  // 保留中文字符
-            .replace(Regex("-+"), "-")
-            .trim('-')
-            .ifEmpty { "heading" }
-    }
-
-    private fun deduplicateId(slug: String, usedIds: MutableMap<String, Int>): String {
-        val count = usedIds[slug]
-        return if (count == null) {
-            usedIds[slug] = 1
-            slug
-        } else {
-            usedIds[slug] = count + 1
-            val newId = "$slug-$count"
-            usedIds[newId] = 1
-            newId
-        }
-    }
-
-    /**
-     * GFM：过滤禁止的原始 HTML 标签。
-     * 将 `<script>`, `<textarea>`, `<style>` 等危险标签内容替换为注释。
-     */
-    private fun filterDisallowedHtml(doc: Document) {
-        for (child in doc.children.toList()) {
-            filterDisallowedHtmlRecursive(child)
-        }
-    }
-
-    private fun filterDisallowedHtmlRecursive(node: Node) {
-        when (node) {
-            is HtmlBlock -> {
-                val filtered = filterGfmDisallowedTags(node.literal)
-                if (filtered != node.literal) {
-                    node.literal = filtered
-                }
-            }
-            is InlineHtml -> {
-                val filtered = filterGfmDisallowedTags(node.literal)
-                if (filtered != node.literal) {
-                    node.literal = filtered
-                }
-            }
-            is ContainerNode -> {
-                for (child in node.children.toList()) {
-                    filterDisallowedHtmlRecursive(child)
-                }
-            }
-            else -> {}
-        }
-    }
-
-    private fun filterGfmDisallowedTags(html: String): String {
-        return GFM_DISALLOWED_TAG_REGEX.replace(html) { match ->
-            "<!-- ${match.value} (filtered) -->"
-        }
-    }
-
-    /**
-     * 将缩写定义应用到文档中的 Text 节点。
-     * 遍历所有 Text 节点，将匹配的缩写词替换为 Abbreviation 节点。
-     */
-    private fun applyAbbreviations(doc: Document) {
-        if (doc.abbreviationDefinitions.isEmpty()) return
-        // 按长度降序排列，优先匹配较长的缩写
-        val abbrs = doc.abbreviationDefinitions.values.sortedByDescending { it.abbreviation.length }
-        applyAbbreviationsRecursive(doc, abbrs)
-    }
-
-    private fun applyAbbreviationsRecursive(node: Node, abbrs: List<AbbreviationDefinition>) {
-        if (node is ContainerNode) {
-            val children = node.children.toList()
-            for (child in children) {
-                if (child is Text) {
-                    replaceAbbreviationsInText(node, child, abbrs)
-                } else {
-                    applyAbbreviationsRecursive(child, abbrs)
-                }
-            }
-        }
-    }
-
-    private fun replaceAbbreviationsInText(
-        parent: ContainerNode,
-        textNode: Text,
-        abbrs: List<AbbreviationDefinition>
-    ) {
-        var text = textNode.literal
-        val replacements = mutableListOf<Triple<Int, Int, AbbreviationDefinition>>() // start, end, def
-
-        for (def in abbrs) {
-            val abbr = def.abbreviation
-            var searchFrom = 0
-            while (true) {
-                val idx = text.indexOf(abbr, searchFrom)
-                if (idx < 0) break
-                // 确保是词边界
-                val before = if (idx > 0) text[idx - 1] else ' '
-                val after = if (idx + abbr.length < text.length) text[idx + abbr.length] else ' '
-                if (!before.isLetterOrDigit() && !after.isLetterOrDigit()) {
-                    replacements.add(Triple(idx, idx + abbr.length, def))
-                }
-                searchFrom = idx + abbr.length
-            }
-        }
-
-        if (replacements.isEmpty()) return
-
-        // 去除重叠的替换，按位置排序
-        val sorted = replacements.sortedBy { it.first }
-        val filtered = mutableListOf<Triple<Int, Int, AbbreviationDefinition>>()
-        var lastEnd = 0
-        for (r in sorted) {
-            if (r.first >= lastEnd) {
-                filtered.add(r)
-                lastEnd = r.second
-            }
-        }
-
-        // 构建替换后的节点列表
-        val newNodes = mutableListOf<Node>()
-        var pos = 0
-        for ((start, end, def) in filtered) {
-            if (start > pos) {
-                newNodes.add(Text(text.substring(pos, start)))
-            }
-            newNodes.add(Abbreviation(abbreviation = def.abbreviation, fullText = def.fullText))
-            pos = end
-        }
-        if (pos < text.length) {
-            newNodes.add(Text(text.substring(pos)))
-        }
-
-        // 替换原 Text 节点
-        val idx = parent.children.indexOf(textNode)
-        if (idx >= 0) {
-            parent.removeChild(textNode)
-            for ((i, n) in newNodes.withIndex()) {
-                parent.insertChild(idx + i, n)
-            }
-        }
-    }
-
-    /**
-     * 后处理：将 info string 为 mermaid/plantuml 等的 FencedCodeBlock 转换为 DiagramBlock。
-     */
-    private fun convertDiagramBlocks(doc: Document) {
-        convertDiagramBlocksRecursive(doc)
-    }
-
-    private fun convertDiagramBlocksRecursive(node: Node) {
-        if (node is ContainerNode) {
-            val children = node.children.toList()
-            for (child in children) {
-                if (child is FencedCodeBlock && child.language.lowercase() in DIAGRAM_LANGUAGES) {
-                    val diagram = DiagramBlock(
-                        diagramType = child.language.lowercase(),
-                        literal = child.literal,
-                    )
-                    diagram.lineRange = child.lineRange
-                    diagram.sourceRange = child.sourceRange
-                    diagram.contentHash = child.contentHash
-                    node.replaceChild(child, diagram)
-                } else {
-                    convertDiagramBlocksRecursive(child)
-                }
-            }
-        }
-    }
-
     companion object {
         private val LINK_REF_DEF_REGEX = Regex(
             "^\\s{0,3}\\[([^\\]]+)\\]:\\s+(?:<([^>]*)>|(\\S+))(?:\\s+(?:\"([^\"]*)\"|'([^']*)'|\\(([^)]*)\\)))?\\s*$",
@@ -1943,58 +1040,7 @@ class BlockParser(
             RegexOption.MULTILINE
         )
 
-        /** GFM 禁止的 HTML 标签 */
-        private val GFM_DISALLOWED_TAG_REGEX = Regex(
-            "<(title|textarea|style|xmp|iframe|noembed|noframes|script|plaintext)(\\s[^>]*)?>",
-            RegexOption.IGNORE_CASE
-        )
-
-        // ─── 预编译正则表达式（Tree-sitter 风格优化） ───
-
-        /** 自定义标题 ID：{#id} */
-        private val CUSTOM_ID_REGEX = Regex("\\{#([^\\}]+)\\}\\s*$")
-        private val CUSTOM_ID_STRIP_REGEX = Regex("\\s*\\{#[^\\}]+\\}\\s*$")
-
-        /** 围栏代码块信息字符串中的语言提取 */
-        private val INFO_LANG_SPLIT_REGEX = Regex("\\s+")
-
-        /** 表格分隔行单元格校验 */
-        private val TABLE_DELIM_CELL_REGEX = Regex(":?-+:?")
-
         /** Admonition 类型匹配：[!TYPE] 或 [!TYPE] title */
         private val ADMONITION_REGEX = Regex("^\\[!([A-Z]+)\\]\\s*(.*)")
-
-        /** 自定义容器属性块：{.class #id key=value} */
-        private val CONTAINER_ATTR_REGEX = Regex("\\{([^}]+)\\}")
-        /** 自定义容器 CSS class：.classname */
-        private val CONTAINER_CLASS_REGEX = Regex("\\.([a-zA-Z][a-zA-Z0-9_-]*)")
-        /** 自定义容器 CSS ID：#idname */
-        private val CONTAINER_ID_REGEX = Regex("#([a-zA-Z][a-zA-Z0-9_-]*)")
-        /** 自定义容器标题提取（双引号或单引号） */
-        private val CONTAINER_TITLE_REGEX = Regex("\"([^\"]*)\"|'([^']*)'")
-
-        /** 识别为图表块的围栏代码块语言标识 */
-        private val DIAGRAM_LANGUAGES = setOf(
-            "mermaid", "plantuml", "dot", "graphviz", "ditaa",
-            "flowchart", "sequence", "gantt", "pie", "mindmap",
-        )
-
-        /** HTML 块类型检测（类型 1-7） */
-        private val HTML_TYPE1_REGEX = Regex("^<(script|pre|style|textarea)(\\s|>|$)", RegexOption.IGNORE_CASE)
-        private val HTML_TYPE4_REGEX = Regex("^<![A-Z]")
-        private val HTML_TYPE6_TAG_REGEX = Regex("^</?([a-zA-Z][a-zA-Z0-9-]*)(\\s|/?>|$)")
-        private val HTML_TYPE7_REGEX = Regex("^</?[a-zA-Z][a-zA-Z0-9-]*([\\s/]|>)")
-
-        /** HTML 块类型 6 的已知块级标签集合 */
-        private val BLOCK_TAGS = setOf(
-            "address", "article", "aside", "base", "basefont", "blockquote", "body",
-            "caption", "center", "col", "colgroup", "dd", "details", "dialog", "dir",
-            "div", "dl", "dt", "fieldset", "figcaption", "figure", "footer", "form",
-            "frame", "frameset", "h1", "h2", "h3", "h4", "h5", "h6", "head", "header",
-            "hr", "html", "iframe", "legend", "li", "link", "main", "menu", "menuitem",
-            "nav", "noframes", "ol", "optgroup", "option", "p", "param", "search",
-            "section", "summary", "table", "tbody", "td", "template", "tfoot", "th",
-            "thead", "title", "tr", "track", "ul"
-        )
     }
 }
