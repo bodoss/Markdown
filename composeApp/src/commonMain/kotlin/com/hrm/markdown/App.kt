@@ -21,6 +21,9 @@ fun App() {
                 .safeContentPadding()
                 .fillMaxSize(),
             theme = MarkdownTheme(),
+            onLinkClick = { url ->
+                println("Clicked link: $url")
+            }
         )
     }
 }

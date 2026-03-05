@@ -1,11 +1,11 @@
 package com.hrm.markdown.renderer
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -19,16 +19,10 @@ import com.hrm.markdown.renderer.block.BlockRenderer
 /**
  * Markdown 渲染器的顶层 Composable 入口。
  *
- * 支持两种使用方式：
- * 1. 传入原始 Markdown 文本，内部自动解析
- * 2. 传入已解析的 AST [Document] 节点
- *
- * 使用 [LazyColumn] 实现高效的长文档滚动渲染。
- *
  * @param markdown 原始 Markdown 文本
  * @param modifier Compose Modifier
  * @param theme 可选的自定义主题
- * @param listState LazyColumn 的滚动状态
+ * @param scrollState 滚动状态，外部可控制滚动位置
  * @param onLinkClick 链接点击回调
  */
 @Composable
@@ -36,7 +30,7 @@ fun Markdown(
     markdown: String,
     modifier: Modifier = Modifier,
     theme: MarkdownTheme = MarkdownTheme(),
-    listState: LazyListState = rememberLazyListState(),
+    scrollState: ScrollState = rememberScrollState(),
     onLinkClick: ((String) -> Unit)? = null,
 ) {
     val document = remember(markdown) {
@@ -46,7 +40,7 @@ fun Markdown(
         document = document,
         modifier = modifier,
         theme = theme,
-        listState = listState,
+        scrollState = scrollState,
         onLinkClick = onLinkClick,
     )
 }
@@ -60,7 +54,7 @@ internal fun InnerMarkdown(
     document: Document,
     modifier: Modifier = Modifier,
     theme: MarkdownTheme = MarkdownTheme(),
-    listState: LazyListState = rememberLazyListState(),
+    scrollState: ScrollState = rememberScrollState(),
     onLinkClick: ((String) -> Unit)? = null,
 ) {
     val blockNodes = remember(document) {
@@ -72,16 +66,14 @@ internal fun InnerMarkdown(
             document = document,
             onLinkClick = onLinkClick,
         ) {
-            LazyColumn(
-                modifier = modifier,
-                state = listState,
-                verticalArrangement = Arrangement.spacedBy(theme.blockSpacing),
-            ) {
-                items(
-                    items = blockNodes,
-                    key = { it.keyFor() },
-                ) { node ->
-                    BlockRenderer(node)
+            SelectionContainer {
+                Column(
+                    modifier = modifier.verticalScroll(scrollState),
+                    verticalArrangement = Arrangement.spacedBy(theme.blockSpacing),
+                ) {
+                    for (node in blockNodes) {
+                        BlockRenderer(node)
+                    }
                 }
             }
         }
@@ -89,7 +81,7 @@ internal fun InnerMarkdown(
 }
 
 /**
- * 非 Lazy 版本，用于嵌套在其他可滚动容器中。
+ * 非 Lazy 版本，用于嵌套在其他容器中。
  * 例如：BlockQuote、ListItem 内部的子块渲染。
  */
 @Composable
@@ -109,19 +101,5 @@ internal fun MarkdownBlockChildren(
         for (node in blockNodes) {
             BlockRenderer(node)
         }
-    }
-}
-
-/**
- * 为 LazyColumn 的 item 生成稳定 key。
- * 优先使用 sourceRange（增量解析复用场景下唯一性好），
- * 回退到 hashCode + index 组合。
- */
-private fun Node.keyFor(): Any {
-    val sr = sourceRange
-    return if (sr.start.offset != sr.end.offset) {
-        "${sr.start.offset}-${sr.end.offset}"
-    } else {
-        this.hashCode()
     }
 }

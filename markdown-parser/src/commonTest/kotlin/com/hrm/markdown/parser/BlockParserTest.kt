@@ -473,6 +473,116 @@ class TableParserTest {
         val table = doc.children.first()
         assertIs<Table>(table)
     }
+
+    @Test
+    fun should_parse_header_cell_content_correctly() {
+        val input = "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |"
+        val doc = parser.parse(input)
+        val table = doc.children.first()
+        assertIs<Table>(table)
+
+        val head = table.children.filterIsInstance<TableHead>().first()
+        val headerRow = head.children.first()
+        assertIs<TableRow>(headerRow)
+
+        val headerCells = headerRow.children.filterIsInstance<TableCell>()
+        assertEquals(3, headerCells.size)
+
+        // 验证表头单元格的行内内容已正确解析（而非整行文本）
+        val headerTexts = headerCells.map { cell ->
+            val text = cell.children.firstOrNull()
+            assertIs<Text>(text)
+            text.literal
+        }
+        assertEquals(listOf("A", "B", "C"), headerTexts)
+    }
+
+    @Test
+    fun should_parse_body_cell_content_correctly() {
+        val input = "| A | B | C |\n| --- | --- | --- |\n| 1 | 2 | 3 |"
+        val doc = parser.parse(input)
+        val table = doc.children.first()
+        assertIs<Table>(table)
+
+        val body = table.children.filterIsInstance<TableBody>().first()
+        val bodyRow = body.children.first()
+        assertIs<TableRow>(bodyRow)
+
+        val bodyCells = bodyRow.children.filterIsInstance<TableCell>()
+        assertEquals(3, bodyCells.size)
+
+        val bodyTexts = bodyCells.map { cell ->
+            val text = cell.children.firstOrNull()
+            assertIs<Text>(text)
+            text.literal
+        }
+        assertEquals(listOf("1", "2", "3"), bodyTexts)
+    }
+
+    @Test
+    fun should_parse_cell_with_inline_formatting() {
+        val input = "| Header |\n| --- |\n| **bold** and *italic* |"
+        val doc = parser.parse(input)
+        val table = doc.children.first()
+        assertIs<Table>(table)
+
+        val body = table.children.filterIsInstance<TableBody>().first()
+        val row = body.children.first()
+        assertIs<TableRow>(row)
+        val cell = row.children.first()
+        assertIs<TableCell>(cell)
+
+        // 验证行内格式被正确解析，而非包含 | 字符
+        val cellText = cell.children.joinToString("") { node ->
+            when (node) {
+                is Text -> node.literal
+                is Emphasis -> (node.children.firstOrNull() as? Text)?.literal ?: ""
+                is StrongEmphasis -> (node.children.firstOrNull() as? Text)?.literal ?: ""
+                else -> ""
+            }
+        }
+        assertTrue(cellText.contains("bold"))
+        assertTrue(cellText.contains("italic"))
+    }
+
+    @Test
+    fun should_parse_multiple_body_rows() {
+        val input = "| H1 | H2 |\n| --- | --- |\n| a | b |\n| c | d |"
+        val doc = parser.parse(input)
+        val table = doc.children.first()
+        assertIs<Table>(table)
+
+        val body = table.children.filterIsInstance<TableBody>().first()
+        val rows = body.children.filterIsInstance<TableRow>()
+        assertEquals(2, rows.size)
+
+        // 第一行
+        val row1Cells = rows[0].children.filterIsInstance<TableCell>()
+        assertEquals("a", (row1Cells[0].children.first() as Text).literal)
+        assertEquals("b", (row1Cells[1].children.first() as Text).literal)
+
+        // 第二行
+        val row2Cells = rows[1].children.filterIsInstance<TableCell>()
+        assertEquals("c", (row2Cells[0].children.first() as Text).literal)
+        assertEquals("d", (row2Cells[1].children.first() as Text).literal)
+    }
+
+    @Test
+    fun should_handle_empty_cell_content() {
+        val input = "| A | B |\n| --- | --- |\n|  | text |"
+        val doc = parser.parse(input)
+        val table = doc.children.first()
+        assertIs<Table>(table)
+
+        val body = table.children.filterIsInstance<TableBody>().first()
+        val row = body.children.first()
+        assertIs<TableRow>(row)
+        val cells = row.children.filterIsInstance<TableCell>()
+
+        // 空单元格不应包含 | 字符
+        val firstCellChildren = cells[0].children
+        assertTrue(firstCellChildren.isEmpty() || (firstCellChildren.first() as? Text)?.literal?.trim().isNullOrEmpty())
+    }
 }
 
 class MathBlockParserTest {

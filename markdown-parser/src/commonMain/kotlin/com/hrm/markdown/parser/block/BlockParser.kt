@@ -774,9 +774,7 @@ class BlockParser(
             val align = if (i < alignments.size) alignments[i] else Table.Alignment.NONE
             val cell = TableCell(alignment = align, isHeader = true)
             cell.lineRange = LineRange(tip.contentStartLine, tip.contentStartLine + 1)
-            // 单元格内容将在后续作为行内内容解析
-            val ob = OpenBlock(cell)
-            ob.contentLines.add(cellContent)
+            cell.rawContent = cellContent
             headerRow.appendChild(cell)
         }
         head.appendChild(headerRow)
@@ -966,8 +964,12 @@ class BlockParser(
                 tip.contentLines.add(lineContent)
             }
             is Table -> {
+                // 跳过分隔行（创建表格时分隔行也会被传入 addLineToTip）
+                val rawLine = source.lineContent(lineIdx)
+                if (parseTableDelimiterRow(rawLine.trim()) != null) return
+
                 // 作为表格行解析
-                val cells = parseTableRow(source.lineContent(lineIdx))
+                val cells = parseTableRow(rawLine)
                 val body = node.children.filterIsInstance<TableBody>().firstOrNull() ?: return
                 val row = TableRow()
                 val alignments = node.columnAlignments
@@ -975,8 +977,7 @@ class BlockParser(
                     if (i >= alignments.size) break
                     val cell = TableCell(alignment = alignments[i], isHeader = false)
                     cell.lineRange = LineRange(lineIdx, lineIdx + 1)
-                    val cellOb = OpenBlock(cell)
-                    cellOb.contentLines.add(cellContent)
+                    cell.rawContent = cellContent
                     row.appendChild(cell)
                 }
                 row.lineRange = LineRange(lineIdx, lineIdx + 1)
@@ -1315,9 +1316,8 @@ class BlockParser(
                 lines.joinToString("\n")
             }
             is TableCell -> {
-                // 表格单元格内容来自解析后的单元格
-                val lines = (lr.startLine until lr.endLine).map { source.lineContent(it) }
-                lines.joinToString("\n")
+                // 使用解析时存储的单元格内容，而非从源文本行读取
+                node.rawContent
             }
             else -> {
                 val lines = (lr.startLine until lr.endLine).map { source.lineContent(it) }

@@ -159,6 +159,9 @@ class TableCell(
     var alignment: Table.Alignment = Table.Alignment.NONE,
     var isHeader: Boolean = false
 ) : ContainerNode() {
+    /** 单元格的原始文本内容（由解析器在分割表格行时设置）。 */
+    var rawContent: String = ""
+
     override fun <R> accept(visitor: NodeVisitor<R>): R = visitor.visitTableCell(this)
 }
 
