@@ -15,6 +15,7 @@
 - **高性能解析**：基于 AST 的递归下降解析器，支持增量更新。
 - **多平台一致性**：使用 Compose Multiplatform 在 Android、iOS、Desktop (JVM) 和 Web (Wasm/JS) 平台上实现一致渲染。
 - **全面的语法覆盖**：已支持 229/243 项 Markdown 特性（94% 覆盖率），涵盖 CommonMark、GFM 及常见扩展语法。
+- **内置图片加载**：集成 Coil3 + Ktor3，开箱即用的网络图片加载，支持指定尺寸、自适应宽度，也支持自定义图片渲染器。
 - **可定制主题**：完整的主题系统，30+ 可配置属性，覆盖标题、代码块、表格、引用等所有元素样式。
 - **LaTeX 数学公式**：支持行内 (`$...$`) 和块级 (`$$...$$`) 数学公式，集成 LaTeX 渲染引擎。
 - **增量解析**：感知编辑操作的解析器，仅重新解析受影响区域，适用于实时编辑场景。
@@ -106,13 +107,38 @@ Markdown(
 )
 ```
 
+### 图片加载
+
+库内置了基于 Coil3 的图片加载能力，Markdown 中的图片语法会自动从网络加载并渲染：
+
+```markdown
+![描述文本](https://example.com/image.png)
+![指定尺寸](https://example.com/image.png =200x100)
+```
+
+如需自定义图片渲染逻辑（例如添加 loading 占位符、错误状态等），可通过 `imageContent` 参数覆盖：
+
+```kotlin
+Markdown(
+    markdown = markdownText,
+    imageContent = { data, modifier ->
+        // data.url, data.altText, data.width, data.height 等信息均可获取
+        AsyncImage(
+            model = data.url,
+            contentDescription = data.altText,
+            modifier = modifier,
+        )
+    },
+)
+```
+
 ## 📦 安装
 
 在 `gradle/libs.versions.toml` 中添加依赖：
 
 ```toml
 [versions]
-markdown = "0.0.1"
+markdown = "1.0.0"
 
 [libraries]
 markdown-parser = { module = "io.github.huarangmeng:markdown-parser", version.ref = "markdown" }
@@ -123,11 +149,12 @@ markdown-renderer = { module = "io.github.huarangmeng:markdown-renderer", versio
 
 ```kotlin
 dependencies {
-    implementation(libs.markdown.renderer) // 已包含 parser 作为传递依赖
+    implementation(libs.markdown.parser)
+    implementation(libs.markdown.renderer)
 }
 ```
 
-> **注意**：`markdown-renderer` 通过 `api()` 依赖了 `markdown-parser`，因此通常只需添加 renderer 依赖即可。
+> `markdown-renderer` 内置了 Coil3 + Ktor3 用于图片加载，会作为传递依赖自动引入。
 
 ## 🏗️ 项目结构
 
@@ -150,13 +177,13 @@ dependencies {
 
 ```bash
 # Parser 模块测试
-./gradlew :markdown-parser:allTests
+./gradlew :markdown-parser:jvmTest
 
 # Renderer 模块测试
-./gradlew :markdown-renderer:allTests
+./gradlew :markdown-renderer:jvmTest
 
 # 全部测试
-./gradlew allTests
+./gradlew jvmTest
 ```
 
 ## 📊 路线图与功能覆盖

@@ -5,6 +5,7 @@ import androidx.compose.foundation.text.appendInlineContent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.Placeholder
@@ -19,7 +20,11 @@ import androidx.compose.ui.text.style.BaselineShift
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.sp
+import com.hrm.latex.renderer.measure.LatexMeasurerState
+import com.hrm.latex.renderer.measure.rememberLatexMeasurer
+import com.hrm.latex.renderer.model.LatexConfig
 import com.hrm.markdown.parser.ast.*
 import com.hrm.markdown.renderer.LocalMarkdownTheme
 import com.hrm.markdown.renderer.MarkdownTheme
@@ -40,10 +45,12 @@ internal fun rememberInlineContent(
     onLinkClick: ((String) -> Unit)? = null,
 ): Pair<AnnotatedString, Map<String, InlineTextContent>> {
     val theme = LocalMarkdownTheme.current
-    return remember(parent, theme, onLinkClick) {
+    val latexMeasurer = rememberLatexMeasurer()
+    val density = LocalDensity.current
+    return remember(parent, theme, onLinkClick, latexMeasurer, density) {
         val inlineContents = mutableMapOf<String, InlineTextContent>()
         val annotated = buildAnnotatedString {
-            renderInlineChildren(parent.children, theme, inlineContents, onLinkClick)
+            renderInlineChildren(parent.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
         }
         annotated to inlineContents
     }
@@ -57,8 +64,10 @@ internal fun buildInlineAnnotatedString(
     theme: MarkdownTheme,
     inlineContents: MutableMap<String, InlineTextContent>,
     onLinkClick: ((String) -> Unit)? = null,
+    latexMeasurer: LatexMeasurerState? = null,
+    density: Density? = null,
 ): AnnotatedString = buildAnnotatedString {
-    renderInlineChildren(nodes, theme, inlineContents, onLinkClick)
+    renderInlineChildren(nodes, theme, inlineContents, onLinkClick, latexMeasurer, density)
 }
 
 private fun AnnotatedString.Builder.renderInlineChildren(
@@ -66,9 +75,11 @@ private fun AnnotatedString.Builder.renderInlineChildren(
     theme: MarkdownTheme,
     inlineContents: MutableMap<String, InlineTextContent>,
     onLinkClick: ((String) -> Unit)?,
+    latexMeasurer: LatexMeasurerState? = null,
+    density: Density? = null,
 ) {
     for (node in nodes) {
-        renderInlineNode(node, theme, inlineContents, onLinkClick)
+        renderInlineNode(node, theme, inlineContents, onLinkClick, latexMeasurer, density)
     }
 }
 
@@ -77,6 +88,8 @@ private fun AnnotatedString.Builder.renderInlineNode(
     theme: MarkdownTheme,
     inlineContents: MutableMap<String, InlineTextContent>,
     onLinkClick: ((String) -> Unit)?,
+    latexMeasurer: LatexMeasurerState? = null,
+    density: Density? = null,
 ) {
     when (node) {
         is Text -> append(node.literal)
@@ -87,19 +100,19 @@ private fun AnnotatedString.Builder.renderInlineNode(
 
         is Emphasis -> {
             withStyle(SpanStyle(fontStyle = FontStyle.Italic)) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
 
         is StrongEmphasis -> {
             withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
 
         is Strikethrough -> {
             withStyle(theme.strikethroughStyle) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
 
@@ -123,7 +136,7 @@ private fun AnnotatedString.Builder.renderInlineNode(
                 },
             )
             withLink(linkAnnotation) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
 
@@ -216,26 +229,40 @@ private fun AnnotatedString.Builder.renderInlineNode(
         is InlineMath -> {
             val id = "math_${node.hashCode()}"
             val fontSize = theme.mathFontSize
+            val latexConfig = LatexConfig(fontSize = fontSize.sp)
+
+            // 使用 LatexMeasurer 精确测量公式尺寸，避免空白
+            val dims = latexMeasurer?.measure(node.literal, latexConfig)
+            val placeholderWidth = if (dims != null && density != null) {
+                with(density) { dims.widthPx.toSp() }
+            } else {
+                // 回退：粗略估算
+                (fontSize * estimateLatexWidth(node.literal)).sp
+            }
+            val placeholderHeight = if (dims != null && density != null) {
+                with(density) { dims.heightPx.toSp() }
+            } else {
+                (fontSize * 1.5f).sp
+            }
+
             appendInlineContent(id, node.literal)
             inlineContents[id] = InlineTextContent(
                 placeholder = Placeholder(
-                    width = (fontSize * estimateLatexWidth(node.literal)).sp,
-                    height = (fontSize * 1.5f).sp,
+                    width = placeholderWidth,
+                    height = placeholderHeight,
                     placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
                 ),
             ) {
                 com.hrm.latex.renderer.Latex(
                     latex = node.literal,
-                    config = com.hrm.latex.renderer.model.LatexConfig(
-                        fontSize = fontSize.sp,
-                    ),
+                    config = latexConfig,
                 )
             }
         }
 
         is Highlight -> {
             withStyle(SpanStyle(background = theme.highlightColor)) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
 
@@ -245,7 +272,7 @@ private fun AnnotatedString.Builder.renderInlineNode(
                     SpanStyle(baselineShift = BaselineShift.Superscript)
                 )
             ) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
 
@@ -255,13 +282,13 @@ private fun AnnotatedString.Builder.renderInlineNode(
                     SpanStyle(baselineShift = BaselineShift.Subscript)
                 )
             ) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
 
         is InsertedText -> {
             withStyle(theme.insertedTextStyle) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
 
@@ -285,7 +312,7 @@ private fun AnnotatedString.Builder.renderInlineNode(
 
         else -> {
             if (node is ContainerNode) {
-                renderInlineChildren(node.children, theme, inlineContents, onLinkClick)
+                renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
             }
         }
     }

@@ -15,6 +15,7 @@ A high-performance Markdown parsing and rendering library built with Kotlin Mult
 - **High-Performance Parsing**: AST-based recursive descent parser with incremental update support.
 - **Multi-platform Consistency**: Consistent rendering on Android, iOS, Desktop (JVM), and Web (Wasm/JS) via Compose Multiplatform.
 - **Comprehensive Syntax Coverage**: 229/243 Markdown features supported (94% coverage), including CommonMark, GFM, and popular extensions.
+- **Built-in Image Loading**: Integrated Coil3 + Ktor3 for out-of-the-box network image loading with size specification and adaptive width. Custom image renderers are also supported.
 - **Customizable Theming**: Full theme system with 30+ configurable properties for headings, code blocks, tables, blockquotes, and more.
 - **LaTeX Math Support**: Inline (`$...$`) and block (`$$...$$`) math formulas via integrated LaTeX rendering engine.
 - **Incremental Parsing**: Edit-aware parser that only re-parses affected regions for real-time editing scenarios.
@@ -106,13 +107,38 @@ Markdown(
 )
 ```
 
+### Image Loading
+
+The library includes built-in image loading powered by Coil3. Images in Markdown are automatically fetched and rendered:
+
+```markdown
+![Alt text](https://example.com/image.png)
+![With size](https://example.com/image.png =200x100)
+```
+
+To customize image rendering (e.g., add loading placeholders, error states), use the `imageContent` parameter:
+
+```kotlin
+Markdown(
+    markdown = markdownText,
+    imageContent = { data, modifier ->
+        // Access data.url, data.altText, data.width, data.height, etc.
+        AsyncImage(
+            model = data.url,
+            contentDescription = data.altText,
+            modifier = modifier,
+        )
+    },
+)
+```
+
 ## 📦 Installation
 
 Add dependencies in `gradle/libs.versions.toml`:
 
 ```toml
 [versions]
-markdown = "0.0.1"
+markdown = "1.0.0"
 
 [libraries]
 markdown-parser = { module = "io.github.huarangmeng:markdown-parser", version.ref = "markdown" }
@@ -123,11 +149,12 @@ Reference in your module's `build.gradle.kts`:
 
 ```kotlin
 dependencies {
-    implementation(libs.markdown.renderer) // Includes parser as transitive dependency
+    implementation(libs.markdown.parser)
+    implementation(libs.markdown.renderer)
 }
 ```
 
-> **Note**: `markdown-renderer` already depends on `markdown-parser` via `api()`, so you typically only need to add the renderer dependency.
+> `markdown-renderer` includes Coil3 + Ktor3 for image loading, which are automatically included as transitive dependencies.
 
 ## 🏗️ Project Structure
 
@@ -150,13 +177,13 @@ dependencies {
 
 ```bash
 # Parser module tests
-./gradlew :markdown-parser:allTests
+./gradlew :markdown-parser:jvmTest
 
 # Renderer module tests
-./gradlew :markdown-renderer:allTests
+./gradlew :markdown-renderer:jvmTest
 
 # All tests
-./gradlew allTests
+./gradlew jvmTest
 ```
 
 ## 📊 Roadmap & Coverage
