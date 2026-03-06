@@ -133,5 +133,30 @@ class SourceText private constructor(
 
             return SourceText(normalized, offsets.toIntArray())
         }
+
+        /**
+         * 对当前源文本应用编辑操作，返回新的 SourceText。
+         * 这是一个便捷方法，内部通过修改文本内容后重新创建 SourceText。
+         *
+         * @param current 当前源文本
+         * @param offset 编辑起始偏移量
+         * @param deleteLength 要删除的字符数
+         * @param insertText 要插入的文本
+         * @return 新的 SourceText
+         */
+        fun applyEdit(
+            current: SourceText,
+            offset: Int,
+            deleteLength: Int,
+            insertText: String
+        ): SourceText {
+            val oldContent = current.content
+            val newContent = buildString(oldContent.length - deleteLength + insertText.length) {
+                append(oldContent, 0, offset)
+                append(insertText)
+                append(oldContent, offset + deleteLength, oldContent.length)
+            }
+            return of(newContent)
+        }
     }
 }

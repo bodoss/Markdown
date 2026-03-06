@@ -680,7 +680,7 @@ internal class BlockStarters(
 /**
  * 列表项的元数据，用于 BlockParser 中创建/匹配 ListBlock。
  */
-internal data class ListItemMeta(
+data class ListItemMeta(
     val ordered: Boolean,
     val bulletChar: Char,
     val startNumber: Int,

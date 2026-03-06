@@ -2,15 +2,19 @@ package com.hrm.markdown.parser
 
 import com.hrm.markdown.parser.ast.Document
 import com.hrm.markdown.parser.core.SourceText
+import com.hrm.markdown.parser.incremental.EditOperation
+import com.hrm.markdown.parser.incremental.IncrementalEngine
 import com.hrm.markdown.parser.streaming.StreamingParser
 
 /**
  * Markdown 解析器的主入口。
  *
- * 支持两种模式：
+ * 支持三种模式：
  * - **完整解析**：一次性解析整个 Markdown 文本。
  * - **流式解析**：面向 LLM 流式输出场景，支持 append-only 增量解析，
  *   自动修复未关闭的语法结构（围栏代码块、强调、链接等），保障正常展示。
+ * - **编辑模式**：支持任意位置的 insert/delete/replace 操作，
+ *   利用增量解析引擎精准定位脏区并增量更新 AST。
  *
  * ## 完整解析
  * ```kotlin
@@ -25,23 +29,37 @@ import com.hrm.markdown.parser.streaming.StreamingParser
  * parser.append("# Hello")
  * parser.append(" World\n\n")
  * parser.append("This is **bold")
- * val doc = parser.getDocument() // "bold" 会自动补全 **
+ * val doc = parser.document // "bold" 会自动补全 **
  * parser.endStream()
+ * ```
+ *
+ * ## 编辑模式
+ * ```kotlin
+ * val parser = MarkdownParser()
+ * parser.parse("# Hello\n\nWorld")
+ * parser.insert(offset = 13, text = " of Markdown")
+ * val doc = parser.document // 增量更新后的 AST
  * ```
  */
 class MarkdownParser {
 
     private val streamingParser = StreamingParser()
+    private val editEngine = IncrementalEngine()
+
+    /** 是否处于编辑模式（通过 edit API 操作过） */
+    private var inEditMode = false
 
     /**
      * 当前文档 AST。每次解析/编辑后更新。
      */
-    val document: Document get() = streamingParser.document
+    val document: Document
+        get() = if (inEditMode) editEngine.document else streamingParser.document
 
     /**
      * 当前源文本。每次解析/编辑后更新。
      */
-    val sourceText: SourceText get() = streamingParser.sourceText
+    val sourceText: SourceText
+        get() = if (inEditMode) editEngine.sourceText else streamingParser.sourceText
 
     /**
      * 当前是否处于流式接收中。
@@ -53,6 +71,7 @@ class MarkdownParser {
      * 返回 AST 的根 Document 节点。
      */
     fun parse(input: String): Document {
+        inEditMode = false
         return streamingParser.fullParse(input)
     }
 
@@ -62,6 +81,7 @@ class MarkdownParser {
      * 开始一次新的流式会话。清空之前的状态。
      */
     fun beginStream() {
+        inEditMode = false
         streamingParser.beginStream()
     }
 
@@ -96,7 +116,72 @@ class MarkdownParser {
     /**
      * 获取当前完整文本。
      */
-    fun currentText(): String = streamingParser.currentText()
+    fun currentText(): String {
+        return if (inEditMode) editEngine.currentText() else streamingParser.currentText()
+    }
+
+    // ────── 编辑 API（新增） ──────
+
+    /**
+     * 在指定偏移量处插入文本。
+     * 利用增量解析引擎，只重解析受影响的区域。
+     *
+     * @param offset 插入位置的字符偏移量
+     * @param text 要插入的文本
+     * @return 更新后的 Document
+     */
+    fun insert(offset: Int, text: String): Document {
+        ensureEditMode()
+        return editEngine.applyEdit(EditOperation.Insert(offset, text))
+    }
+
+    /**
+     * 从指定偏移量开始删除指定长度的文本。
+     *
+     * @param offset 删除起始位置的字符偏移量
+     * @param length 要删除的字符数
+     * @return 更新后的 Document
+     */
+    fun delete(offset: Int, length: Int): Document {
+        ensureEditMode()
+        return editEngine.applyEdit(EditOperation.Delete(offset, length))
+    }
+
+    /**
+     * 替换指定范围的文本。
+     *
+     * @param offset 替换起始位置的字符偏移量
+     * @param length 要替换的原文长度
+     * @param newText 新的文本内容
+     * @return 更新后的 Document
+     */
+    fun replace(offset: Int, length: Int, newText: String): Document {
+        ensureEditMode()
+        return editEngine.applyEdit(EditOperation.Replace(offset, length, newText))
+    }
+
+    /**
+     * 应用通用编辑操作。
+     *
+     * @param edit 编辑操作
+     * @return 更新后的 Document
+     */
+    fun applyEdit(edit: EditOperation): Document {
+        ensureEditMode()
+        return editEngine.applyEdit(edit)
+    }
+
+    /**
+     * 确保处于编辑模式。
+     * 如果之前是解析模式，将当前文本同步到编辑引擎。
+     */
+    private fun ensureEditMode() {
+        if (!inEditMode) {
+            val currentText = streamingParser.currentText()
+            editEngine.fullParse(currentText)
+            inEditMode = true
+        }
+    }
 
     companion object {
         /**

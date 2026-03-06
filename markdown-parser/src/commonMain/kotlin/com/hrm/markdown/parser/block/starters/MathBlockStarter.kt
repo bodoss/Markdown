@@ -1,0 +1,41 @@
+package com.hrm.markdown.parser.block.starters
+
+import com.hrm.markdown.parser.LineRange
+import com.hrm.markdown.parser.ast.MathBlock
+import com.hrm.markdown.parser.block.OpenBlock
+import com.hrm.markdown.parser.core.LineCursor
+
+/**
+ * 数学公式块开启器：`$$...$$`。
+ */
+internal class MathBlockStarter : BlockStarter {
+    override val priority: Int = 320
+    override val canInterruptParagraph: Boolean = true
+
+    override fun tryStart(cursor: LineCursor, lineIdx: Int, tip: OpenBlock): OpenBlock? {
+        val indent = cursor.advanceSpaces(3)
+        if (cursor.remaining < 2) return null
+        if (cursor.peek() != '$' || cursor.peek(1) != '$') return null
+
+        cursor.advance()
+        cursor.advance()
+        val rest = cursor.rest().trim()
+        if (rest.endsWith("$$") && rest.length > 2) {
+            val content = rest.dropLast(2)
+            val block = MathBlock(literal = content)
+            block.lineRange = LineRange(lineIdx, lineIdx + 1)
+            val ob = OpenBlock(block, lastLineIndex = lineIdx)
+            ob.starterTag = this::class.simpleName
+            return ob
+        }
+
+        val block = MathBlock()
+        block.lineRange = LineRange(lineIdx, lineIdx + 1)
+        val ob = OpenBlock(block, contentStartLine = lineIdx, lastLineIndex = lineIdx)
+        if (rest.isNotEmpty()) {
+            ob.contentLines.add(rest)
+        }
+        ob.starterTag = this::class.simpleName
+        return ob
+    }
+}

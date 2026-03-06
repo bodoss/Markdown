@@ -4,6 +4,8 @@ import com.hrm.markdown.parser.SourcePosition
 import com.hrm.markdown.parser.SourceRange
 import com.hrm.markdown.parser.LineRange
 import com.hrm.markdown.parser.ast.*
+import com.hrm.markdown.parser.block.starters.BlockStarterRegistry
+import com.hrm.markdown.parser.block.starters.HeadingStarter
 import com.hrm.markdown.parser.core.CharacterUtils
 import com.hrm.markdown.parser.core.LineCursor
 import com.hrm.markdown.parser.core.SourceText
@@ -19,12 +21,26 @@ import com.hrm.markdown.parser.core.SourceText
  * 此设计支持高效的增量解析：仅需重新解析脏块，
  * 且行内解析是延迟执行的。
  *
- * 块开启逻辑委托给 [BlockStarters]，
- * 后处理逻辑委托给 [PostProcessors]，
+ * 块开启逻辑委托给 [BlockStarters]（默认）或 [BlockStarterRegistry]（插件模式），
  * 表格行解析委托给 [TableParser]。
+ *
+ * **注意**：`BlockParser` 只负责块结构 + 行内解析，不执行后处理。
+ * 后处理（标题ID、HTML过滤、缩写替换等）由调用者通过
+ * [com.hrm.markdown.parser.block.postprocessors.PostProcessorRegistry] 统一控制。
+ *
+ * ## 扩展方式
+ * 传入自定义 [BlockStarterRegistry] 可以注册额外的块级语法：
+ * ```kotlin
+ * val starters = BlockStarterRegistry()
+ * starters.registerAll(*defaultStarters)
+ * starters.register(MyCustomBlockStarter())
+ *
+ * val parser = BlockParser(source, registry = starters) { doc -> InlineParser(doc) }
+ * ```
  */
 class BlockParser(
     private val source: SourceText,
+    internal val registry: BlockStarterRegistry? = null,
     private val inlineParserFactory: ((Document) -> InlineParserInterface)? = null
 ) {
     private val document = Document()
@@ -76,12 +92,6 @@ class BlockParser(
 
         // 解析行内内容
         parseInlineContent(document)
-
-        // 后处理
-        PostProcessors.generateHeadingIds(document)
-        PostProcessors.filterDisallowedHtml(document)
-        PostProcessors.applyAbbreviations(document)
-        PostProcessors.convertDiagramBlocks(document)
 
         return document
     }
@@ -158,10 +168,20 @@ class BlockParser(
             if (lastMatched.isFenced) break // 在围栏代码块内部，不开启新块
 
             // 按优先级顺序尝试各种块开启
-            val newBlock = starters.tryStartBlock(cursor, lineIdx, lastMatched)
+            // 优先使用注册制（如果有），否则使用旧的 BlockStarters
+            val newBlock = if (registry != null) {
+                registry.tryStart(cursor, lineIdx, lastMatched)
+            } else {
+                starters.tryStartBlock(cursor, lineIdx, lastMatched)
+            }
             if (newBlock != null) {
                 // 如果当前是段落且新块不能中断段落
-                if (lastMatched.paragraphContent != null && !starters.canInterruptParagraph(newBlock.node, cursor)) {
+                val canInterrupt = if (registry != null) {
+                    registry.canInterruptParagraph(newBlock)
+                } else {
+                    starters.canInterruptParagraph(newBlock.node, cursor)
+                }
+                if (lastMatched.paragraphContent != null && !canInterrupt) {
                     // 不开启新块，添加到段落
                     break
                 }
@@ -979,9 +999,9 @@ class BlockParser(
                     }
                     // 去除尾部 #
                     content = content.trimEnd()
-                    val customId = starters.extractCustomId(content)
+                    val customId = HeadingStarter.extractCustomId(content)
                     if (customId != null) {
-                        content = content.replace(BlockStarters.CUSTOM_ID_STRIP_REGEX, "").trimEnd()
+                        content = content.replace(HeadingStarter.CUSTOM_ID_STRIP_REGEX, "").trimEnd()
                     }
                     if (content.endsWith('#')) {
                         val t = content.trimEnd('#')
