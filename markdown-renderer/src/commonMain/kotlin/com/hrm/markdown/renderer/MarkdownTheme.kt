@@ -1,6 +1,6 @@
 package com.hrm.markdown.renderer
 
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
@@ -9,7 +9,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.Dp
@@ -20,6 +19,11 @@ import com.hrm.markdown.renderer.highlight.SyntaxColorScheme
 /**
  * Markdown 渲染的完整主题配置。
  * 通过 CompositionLocal 在组件树中传递，支持外部自定义。
+ *
+ * 使用方式：
+ * - `MarkdownTheme.light()` — 亮色主题
+ * - `MarkdownTheme.dark()` — 暗色主题
+ * - `MarkdownTheme.auto()` — 跟随系统日夜间模式（@Composable）
  */
 @Immutable
 data class MarkdownTheme(
@@ -84,10 +88,8 @@ data class MarkdownTheme(
     val mathFontSize: Float = 16f,
     /** 数学公式块背景色 */
     val mathBlockBackground: Color = Color(0xFFF6F8FA),
-    /** 数学公式文字颜色（亮色模式） */
+    /** 数学公式文字颜色 */
     val mathColor: Color = Color(0xFF1F2328),
-    /** 数学公式文字颜色（暗色模式） */
-    val mathDarkColor: Color = Color(0xFFE6EDF3),
     /** Admonition 样式映射 */
     val admonitionStyles: Map<String, AdmonitionStyle> = defaultAdmonitionStyles(),
     /** 脚注文字样式 */
@@ -112,7 +114,61 @@ data class MarkdownTheme(
     ),
     /** 代码块语法高亮配色方案 */
     val syntaxColorScheme: SyntaxColorScheme = SyntaxColorScheme.GitHubLight,
-)
+) {
+    companion object {
+        /**
+         * 亮色主题（GitHub Light 风格），等同于无参构造 `MarkdownTheme()`。
+         */
+        fun light(): MarkdownTheme = MarkdownTheme()
+
+        /**
+         * 暗色主题（GitHub Dark 风格）。
+         */
+        fun dark(): MarkdownTheme = MarkdownTheme(
+            headingStyles = darkHeadingStyles(),
+            bodyStyle = TextStyle(fontSize = 16.sp, lineHeight = 24.sp, color = Color(0xFFE6EDF3)),
+            inlineCodeBackground = Color(0xFF343942),
+            codeBlockStyle = TextStyle(
+                fontFamily = FontFamily.Monospace,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                color = Color(0xFFE6EDF3),
+            ),
+            codeBlockBackground = Color(0xFF161B22),
+            blockQuoteBorderColor = Color(0xFF3D444D),
+            blockQuoteTextColor = Color(0xFF9198A1),
+            dividerColor = Color(0xFF3D444D),
+            linkColor = Color(0xFF4493F8),
+            listBulletColor = Color(0xFFE6EDF3),
+            tableBorderColor = Color(0xFF3D444D),
+            tableHeaderBackground = Color(0xFF161B22),
+            highlightColor = Color(0xFF5C4B00),
+            taskCheckedColor = Color(0xFF3FB950),
+            taskUncheckedColor = Color(0xFF3D444D),
+            mathBlockBackground = Color(0xFF161B22),
+            mathColor = Color(0xFFE6EDF3),
+            admonitionStyles = darkAdmonitionStyles(),
+            kbdBackground = Color(0xFF343942),
+            syntaxColorScheme = SyntaxColorScheme.GitHubDark,
+        )
+
+        /**
+         * 跟随系统日夜间模式，自动选择亮色或暗色主题。
+         * 用法与 `isSystemInDarkTheme()` 一致，默认跟随系统设置。
+         *
+         * ```
+         * Markdown(
+         *     markdown = "# Hello",
+         *     theme = MarkdownTheme.auto(),
+         * )
+         * ```
+         */
+        @Composable
+        fun auto(isDarkTheme: Boolean = isSystemInDarkTheme()): MarkdownTheme {
+            return if (isDarkTheme) dark() else light()
+        }
+    }
+}
 
 @Immutable
 data class AdmonitionStyle(
@@ -130,6 +186,18 @@ internal fun defaultHeadingStyles(): List<TextStyle> = listOf(
     TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp),  // h5
     TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp),    // h6
 )
+
+internal fun darkHeadingStyles(): List<TextStyle> {
+    val headingColor = Color(0xFFE6EDF3)
+    return listOf(
+        TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold, lineHeight = 40.sp, color = headingColor),      // h1
+        TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold, lineHeight = 32.sp, color = headingColor),      // h2
+        TextStyle(fontSize = 20.sp, fontWeight = FontWeight.SemiBold, lineHeight = 28.sp, color = headingColor),  // h3
+        TextStyle(fontSize = 16.sp, fontWeight = FontWeight.SemiBold, lineHeight = 24.sp, color = headingColor),  // h4
+        TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold, lineHeight = 20.sp, color = headingColor),  // h5
+        TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium, lineHeight = 20.sp, color = headingColor),    // h6
+    )
+}
 
 internal fun defaultAdmonitionStyles(): Map<String, AdmonitionStyle> = mapOf(
     "NOTE" to AdmonitionStyle(
@@ -161,6 +229,39 @@ internal fun defaultAdmonitionStyles(): Map<String, AdmonitionStyle> = mapOf(
         backgroundColor = Color(0xFFFFEBE9),
         iconText = "🔴",
         titleColor = Color(0xFFCF222E),
+    ),
+)
+
+internal fun darkAdmonitionStyles(): Map<String, AdmonitionStyle> = mapOf(
+    "NOTE" to AdmonitionStyle(
+        borderColor = Color(0xFF4493F8),
+        backgroundColor = Color(0xFF0D1D30),
+        iconText = "ℹ️",
+        titleColor = Color(0xFF4493F8),
+    ),
+    "TIP" to AdmonitionStyle(
+        borderColor = Color(0xFF3FB950),
+        backgroundColor = Color(0xFF0D2818),
+        iconText = "💡",
+        titleColor = Color(0xFF3FB950),
+    ),
+    "IMPORTANT" to AdmonitionStyle(
+        borderColor = Color(0xFFAB7DF8),
+        backgroundColor = Color(0xFF1B1030),
+        iconText = "❗",
+        titleColor = Color(0xFFAB7DF8),
+    ),
+    "WARNING" to AdmonitionStyle(
+        borderColor = Color(0xFFD29922),
+        backgroundColor = Color(0xFF2A1F00),
+        iconText = "⚠️",
+        titleColor = Color(0xFFD29922),
+    ),
+    "CAUTION" to AdmonitionStyle(
+        borderColor = Color(0xFFF85149),
+        backgroundColor = Color(0xFF300C0C),
+        iconText = "🔴",
+        titleColor = Color(0xFFF85149),
     ),
 )
 

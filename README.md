@@ -16,9 +16,11 @@ A high-performance Markdown parsing and rendering library built with Kotlin Mult
 - **Multi-platform Consistency**: Consistent rendering on Android, iOS, Desktop (JVM), and Web (Wasm/JS) via Compose Multiplatform.
 - **Comprehensive Syntax Coverage**: 229/243 Markdown features supported (94% coverage), including CommonMark, GFM, and popular extensions.
 - **Built-in Image Loading**: Integrated Coil3 + Ktor3 for out-of-the-box network image loading with size specification and adaptive width. Custom image renderers are also supported.
-- **Customizable Theming**: Full theme system with 30+ configurable properties for headings, code blocks, tables, blockquotes, and more.
+- **Streaming Rendering**: First-class support for LLM token-by-token output. Incremental parsing and throttled rendering (5fps) eliminate flicker during streaming.
+- **Customizable Theming**: Full theme system with 30+ configurable properties. Built-in light/dark themes (GitHub style) with automatic system theme detection.
 - **LaTeX Math Support**: Inline (`$...$`) and block (`$$...$$`) math formulas via integrated LaTeX rendering engine.
 - **Incremental Parsing**: Edit-aware parser that only re-parses affected regions for real-time editing scenarios.
+- **Pagination Support**: Progressive rendering for ultra-long documents (500+ blocks) with automatic load-more on scroll.
 
 ## 📐 Supported Markdown Features (229+)
 
@@ -87,18 +89,48 @@ fun MyScreen() {
             ```
         """.trimIndent(),
         modifier = Modifier.fillMaxSize(),
-        theme = MarkdownTheme()
+        theme = MarkdownTheme.auto(), // Automatically follows system light/dark mode
     )
 }
+```
+
+### Streaming Rendering (LLM Integration)
+
+For LLM token-by-token output scenarios, use the `isStreaming` parameter to enable incremental parsing and throttled rendering:
+
+```kotlin
+var text by remember { mutableStateOf("") }
+var isStreaming by remember { mutableStateOf(true) }
+
+LaunchedEffect(Unit) {
+    tokens.collect { token ->
+        text += token
+    }
+    isStreaming = false
+}
+
+Markdown(
+    markdown = text,
+    isStreaming = isStreaming,
+)
 ```
 
 ### Customizing Theme
 
 ```kotlin
+// Use built-in themes
+Markdown(markdown = text, theme = MarkdownTheme.light())  // GitHub Light
+Markdown(markdown = text, theme = MarkdownTheme.dark())   // GitHub Dark
+Markdown(markdown = text, theme = MarkdownTheme.auto())   // Follow system
+
+// Or fully customize
 Markdown(
     markdown = markdownText,
     theme = MarkdownTheme(
-        h1Style = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+        headingStyles = listOf(
+            TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold),
+            // h2 ~ h6 ...
+        ),
         bodyStyle = TextStyle(fontSize = 16.sp),
         codeBlockBackground = Color(0xFFF5F5F5),
         // 30+ configurable properties...
@@ -160,6 +192,7 @@ dependencies {
 
 - `:markdown-parser` — Core parsing engine. Converts Markdown strings into AST (Abstract Syntax Tree).
 - `:markdown-renderer` — Rendering engine. Maps AST nodes to Compose UI components.
+- `:markdown-preview` — Preview/showcase module. Provides interactive demonstrations for all supported Markdown features with a categorized navigation UI.
 - `:composeApp` — Cross-platform Demo application (Android/iOS/Desktop/Web).
 - `:androidApp` — Android-specific Demo application.
 

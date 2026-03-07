@@ -16,9 +16,11 @@
 - **多平台一致性**：使用 Compose Multiplatform 在 Android、iOS、Desktop (JVM) 和 Web (Wasm/JS) 平台上实现一致渲染。
 - **全面的语法覆盖**：已支持 229/243 项 Markdown 特性（94% 覆盖率），涵盖 CommonMark、GFM 及常见扩展语法。
 - **内置图片加载**：集成 Coil3 + Ktor3，开箱即用的网络图片加载，支持指定尺寸、自适应宽度，也支持自定义图片渲染器。
-- **可定制主题**：完整的主题系统，30+ 可配置属性，覆盖标题、代码块、表格、引用等所有元素样式。
+- **流式渲染**：一等公民级别的 LLM 逐 token 输出支持。增量解析 + 节流渲染（5fps），流式生成期间消除闪烁。
+- **可定制主题**：完整的主题系统，30+ 可配置属性。内置亮色/暗色主题（GitHub 风格），自动跟随系统日夜间模式。
 - **LaTeX 数学公式**：支持行内 (`$...$`) 和块级 (`$$...$$`) 数学公式，集成 LaTeX 渲染引擎。
 - **增量解析**：感知编辑操作的解析器，仅重新解析受影响区域，适用于实时编辑场景。
+- **分页加载**：超长文档（500+ 块）渐进式渲染，滚动到底部自动加载更多内容。
 
 ## 📐 已支持的 Markdown 功能（229+）
 
@@ -87,18 +89,48 @@ fun MyScreen() {
             ```
         """.trimIndent(),
         modifier = Modifier.fillMaxSize(),
-        theme = MarkdownTheme()
+        theme = MarkdownTheme.auto(), // 自动跟随系统日夜间模式
     )
 }
+```
+
+### 流式渲染（LLM 集成）
+
+在 LLM 逐 token 输出场景下，使用 `isStreaming` 参数启用增量解析和节流渲染：
+
+```kotlin
+var text by remember { mutableStateOf("") }
+var isStreaming by remember { mutableStateOf(true) }
+
+LaunchedEffect(Unit) {
+    tokens.collect { token ->
+        text += token
+    }
+    isStreaming = false
+}
+
+Markdown(
+    markdown = text,
+    isStreaming = isStreaming,
+)
 ```
 
 ### 自定义主题
 
 ```kotlin
+// 使用内置主题
+Markdown(markdown = text, theme = MarkdownTheme.light())  // GitHub 亮色
+Markdown(markdown = text, theme = MarkdownTheme.dark())   // GitHub 暗色
+Markdown(markdown = text, theme = MarkdownTheme.auto())   // 跟随系统
+
+// 或完全自定义
 Markdown(
     markdown = markdownText,
     theme = MarkdownTheme(
-        h1Style = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.Bold),
+        headingStyles = listOf(
+            TextStyle(fontSize = 32.sp, fontWeight = FontWeight.Bold),
+            // h2 ~ h6 ...
+        ),
         bodyStyle = TextStyle(fontSize = 16.sp),
         codeBlockBackground = Color(0xFFF5F5F5),
         // 30+ 可配置属性...
@@ -160,6 +192,7 @@ dependencies {
 
 - `:markdown-parser` — 核心解析引擎，负责将 Markdown 字符串转换为 AST（抽象语法树）。
 - `:markdown-renderer` — 渲染引擎，负责将 AST 节点映射为 Compose UI 组件。
+- `:markdown-preview` — 预览/演示模块，提供分类浏览的交互式 UI，展示所有支持的 Markdown 功能的渲染效果。
 - `:composeApp` — 跨平台 Demo 应用程序（Android/iOS/Desktop/Web）。
 - `:androidApp` — Android Demo 应用程序。
 
