@@ -34,5 +34,6 @@ plugins {
 
 include(":markdown-parser")
 include(":markdown-renderer")
+include(":markdown-preview")
 include(":composeApp")
 include(":androidapp")
