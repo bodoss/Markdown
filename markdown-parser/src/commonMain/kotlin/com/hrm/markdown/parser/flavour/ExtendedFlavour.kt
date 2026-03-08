@@ -127,6 +127,7 @@ object ExtendedFlavour : MarkdownFlavour {
      * 4. 图表渲染（300）
      * 5. 多列布局转换（350）
      * 6. HTML 过滤（400）
+     * 7. Figure 转换（450）
      */
     override val postProcessors: List<PostProcessor> = listOf(
         HeadingIdProcessor(),          // 100
@@ -136,6 +137,7 @@ object ExtendedFlavour : MarkdownFlavour {
         DiagramProcessor(),            // 300
         ColumnsLayoutProcessor(),      // 350
         HtmlFilterProcessor(),         // 400
+        FigureProcessor(),             // 450
     )
 
 }

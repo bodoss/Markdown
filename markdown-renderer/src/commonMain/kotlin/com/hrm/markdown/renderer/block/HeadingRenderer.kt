@@ -6,13 +6,17 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.unit.dp
 import com.hrm.markdown.parser.ast.Heading
+import com.hrm.markdown.parser.ast.Node
 import com.hrm.markdown.parser.ast.SetextHeading
+import com.hrm.markdown.renderer.LocalMarkdownConfig
 import com.hrm.markdown.renderer.LocalMarkdownTheme
 import com.hrm.markdown.renderer.LocalOnLinkClick
-import com.hrm.markdown.renderer.LocalOnLinkClick
+import com.hrm.markdown.renderer.LocalRendererDocument
 import com.hrm.markdown.renderer.inline.rememberInlineContent
 
 /**
@@ -25,13 +29,28 @@ internal fun HeadingRenderer(
 ) {
     val theme = LocalMarkdownTheme.current
     val onLinkClick = LocalOnLinkClick.current
+    val config = LocalMarkdownConfig.current
     val level = (node.level - 1).coerceIn(0, theme.headingStyles.lastIndex)
     val style = theme.headingStyles[level]
     val (annotated, inlineContents) = rememberInlineContent(node, onLinkClick)
 
+    val numbering = if (config.enableHeadingNumbering) {
+        val document = LocalRendererDocument.current
+        remember(document, node) { computeHeadingNumber(document.children, node) }
+    } else null
+
+    val finalAnnotated = if (numbering != null) {
+        remember(numbering, annotated) {
+            buildAnnotatedString {
+                append("$numbering ")
+                append(annotated)
+            }
+        }
+    } else annotated
+
     Column(modifier = modifier.fillMaxWidth()) {
         BasicText(
-            text = annotated,
+            text = finalAnnotated,
             style = style,
             inlineContent = inlineContents,
         )
@@ -57,13 +76,28 @@ internal fun SetextHeadingRenderer(
 ) {
     val theme = LocalMarkdownTheme.current
     val onLinkClick = LocalOnLinkClick.current
+    val config = LocalMarkdownConfig.current
     val level = (node.level - 1).coerceIn(0, theme.headingStyles.lastIndex)
     val style = theme.headingStyles[level]
     val (annotated, inlineContents) = rememberInlineContent(node, onLinkClick)
 
+    val numbering = if (config.enableHeadingNumbering) {
+        val document = LocalRendererDocument.current
+        remember(document, node) { computeHeadingNumberForSetext(document.children, node) }
+    } else null
+
+    val finalAnnotated = if (numbering != null) {
+        remember(numbering, annotated) {
+            buildAnnotatedString {
+                append("$numbering ")
+                append(annotated)
+            }
+        }
+    } else annotated
+
     Column(modifier = modifier.fillMaxWidth()) {
         BasicText(
-            text = annotated,
+            text = finalAnnotated,
             style = style,
             inlineContent = inlineContents,
         )
@@ -74,4 +108,56 @@ internal fun SetextHeadingRenderer(
             color = theme.dividerColor,
         )
     }
+}
+
+/**
+ * 计算 ATX 标题的层级编号（如 "1", "1.1", "1.1.2"）。
+ * 遍历文档顶层子节点，依次递增各级计数器。
+ */
+private fun computeHeadingNumber(children: List<Node>, target: Heading): String? {
+    // 维护 6 级计数器
+    val counters = IntArray(6)
+    for (child in children) {
+        val level = when (child) {
+            is Heading -> child.level
+            is SetextHeading -> child.level
+            else -> continue
+        }
+        val idx = (level - 1).coerceIn(0, 5)
+        counters[idx]++
+        // 重置下级计数器
+        for (i in idx + 1..5) counters[i] = 0
+
+        if (child === target) {
+            return buildNumberString(counters, idx)
+        }
+    }
+    return null
+}
+
+private fun computeHeadingNumberForSetext(children: List<Node>, target: SetextHeading): String? {
+    val counters = IntArray(6)
+    for (child in children) {
+        val level = when (child) {
+            is Heading -> child.level
+            is SetextHeading -> child.level
+            else -> continue
+        }
+        val idx = (level - 1).coerceIn(0, 5)
+        counters[idx]++
+        for (i in idx + 1..5) counters[i] = 0
+
+        if (child === target) {
+            return buildNumberString(counters, idx)
+        }
+    }
+    return null
+}
+
+private fun buildNumberString(counters: IntArray, maxIdx: Int): String {
+    val parts = mutableListOf<Int>()
+    for (i in 0..maxIdx) {
+        parts.add(counters[i].coerceAtLeast(1))
+    }
+    return parts.joinToString(".")
 }

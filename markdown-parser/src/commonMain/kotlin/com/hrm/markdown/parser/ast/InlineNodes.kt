@@ -301,3 +301,36 @@ class CitationReference(
 class Spoiler : ContainerNode() {
     override fun <R> accept(visitor: NodeVisitor<R>): R = visitor.visitSpoiler(this)
 }
+
+/**
+ * Wiki 链接：`[[page]]` 或 `[[page|显示文本]]`。
+ *
+ * Obsidian 风格内部链接语法，适用于知识库/笔记场景。
+ * - `[[page]]` — 链接目标和显示文本均为 "page"
+ * - `[[page|显示文本]]` — 链接目标为 "page"，显示 "显示文本"
+ */
+class WikiLink(
+    /** 链接目标（页面名称），如 "my-note" */
+    var target: String = "",
+    /** 显示文本，如果为 null 则使用 target */
+    var label: String? = null,
+) : LeafNode() {
+    override val literal: String get() = label ?: target
+    override fun <R> accept(visitor: NodeVisitor<R>): R = visitor.visitWikiLink(this)
+}
+
+/**
+ * Ruby 注音标注：`{漢字|かんじ}`。
+ *
+ * 中日文注音标注，渲染为 `<ruby>` HTML 元素。
+ * - `{漢字|かんじ}` — 在"漢字"上方标注"かんじ"
+ */
+class RubyText(
+    /** 基础文本（被注音的文字） */
+    var base: String = "",
+    /** 注音文本（标注在上方的文字） */
+    var annotation: String = "",
+) : LeafNode() {
+    override val literal: String get() = base
+    override fun <R> accept(visitor: NodeVisitor<R>): R = visitor.visitRubyText(this)
+}

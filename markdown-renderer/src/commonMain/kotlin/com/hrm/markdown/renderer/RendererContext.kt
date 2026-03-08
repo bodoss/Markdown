@@ -26,11 +26,17 @@ internal val LocalOnLinkClick = compositionLocalOf<((String) -> Unit)?> { null }
  */
 internal val LocalRendererDocument = compositionLocalOf { Document() }
 
+/**
+ * Markdown 渲染配置，通过 CompositionLocal 传递。
+ */
+internal val LocalMarkdownConfig = compositionLocalOf { MarkdownConfig.Default }
+
 @Composable
 internal fun ProvideRendererContext(
     document: Document,
     onLinkClick: ((String) -> Unit)?,
     imageContent: MarkdownImageRenderer? = null,
+    config: MarkdownConfig = MarkdownConfig.Default,
     content: @Composable () -> Unit,
 ) {
     // 用 rememberUpdatedState 包装 onLinkClick：
@@ -50,6 +56,7 @@ internal fun ProvideRendererContext(
         LocalOnLinkClick provides stableOnLinkClick,
         LocalRendererDocument provides document,
         LocalImageRenderer provides imageContent,
+        LocalMarkdownConfig provides config,
     ) {
         content()
     }

@@ -99,6 +99,7 @@ fun Markdown(
             document = document,
             modifier = modifier,
             theme = theme,
+            config = config,
             scrollState = scrollState,
             isStreaming = isStreaming,
             enablePagination = enablePagination,
@@ -181,6 +182,7 @@ private fun InnerMarkdown(
     document: Document,
     modifier: Modifier = Modifier,
     theme: MarkdownTheme = MarkdownTheme.auto(),
+    config: MarkdownConfig = MarkdownConfig.Default,
     scrollState: ScrollState = rememberScrollState(),
     isStreaming: Boolean = false,
     enablePagination: Boolean = false,
@@ -268,6 +270,7 @@ private fun InnerMarkdown(
             document = renderDocument,
             onLinkClick = onLinkClick,
             imageContent = imageContent,
+            config = config,
         ) {
             // 流式生成期间跳过 SelectionContainer：
             // SelectionContainer 在内容高频变化时会对内部布局做额外的 intrinsic 测量

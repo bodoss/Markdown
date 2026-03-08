@@ -745,6 +745,46 @@ class HtmlRenderer(
         closeTag("span")
     }
 
+    override fun visitWikiLink(node: WikiLink) {
+        val display = node.label ?: node.target
+        tag("a", mapOf("href" to node.target, "class" to "wikilink"))
+        sb.append(escape(display))
+        closeTag("a")
+    }
+
+    override fun visitRubyText(node: RubyText) {
+        tag("ruby")
+        sb.append(escape(node.base))
+        tag("rp")
+        sb.append("(")
+        closeTag("rp")
+        tag("rt")
+        sb.append(escape(node.annotation))
+        closeTag("rt")
+        tag("rp")
+        sb.append(")")
+        closeTag("rp")
+        closeTag("ruby")
+    }
+
+    override fun visitFigure(node: Figure) {
+        tag("figure")
+        sb.append('\n')
+        tag("img", mapOf(
+            "src" to node.imageUrl,
+            "alt" to node.caption,
+        ), selfClosing = true)
+        sb.append('\n')
+        if (node.caption.isNotEmpty()) {
+            tag("figcaption")
+            sb.append(escape(node.caption))
+            closeTag("figcaption")
+            sb.append('\n')
+        }
+        closeTag("figure")
+        sb.append('\n')
+    }
+
     companion object {
         /**
          * 便捷方法：将 Document 渲染为 HTML 字符串。

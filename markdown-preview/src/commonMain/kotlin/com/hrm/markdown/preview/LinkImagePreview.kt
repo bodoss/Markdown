@@ -5,6 +5,45 @@ import com.hrm.markdown.renderer.Markdown
 
 internal val linkImagePreviewGroups = listOf(
     PreviewGroup(
+        id = "wiki_link",
+        title = "Wiki 链接",
+        description = "Obsidian 风格 [[page]] 内部链接",
+        items = listOf(
+            PreviewItem(
+                id = "wiki_basic",
+                title = "基础 Wiki 链接",
+                content = {
+                    Markdown(
+                        markdown = "访问 [[首页]] 或 [[设置页面]] 查看更多。"
+                    )
+                }
+            ),
+            PreviewItem(
+                id = "wiki_with_label",
+                title = "带显示文本",
+                content = {
+                    Markdown(
+                        markdown = "这是一个 [[getting-started|快速开始指南]]，也可以查看 [[api-reference|API 参考文档]]。"
+                    )
+                }
+            ),
+            PreviewItem(
+                id = "wiki_multiple",
+                title = "多个 Wiki 链接",
+                content = {
+                    Markdown(
+                        markdown = """
+相关笔记：
+- [[Kotlin 基础]]
+- [[Compose Multiplatform|跨平台 UI]]
+- [[协程|Kotlin 协程]]
+                        """.trimIndent()
+                    )
+                }
+            ),
+        )
+    ),
+    PreviewGroup(
         id = "links",
         title = "链接",
         description = "普通链接、自动链接",
@@ -109,6 +148,48 @@ internal val linkImagePreviewGroups = listOf(
 
 尺寸 + 属性：![海滨日落](https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=400&h=200&fit=crop =400x200){.hero-image #main-banner align=center}
                         """.trimIndent()
+                    )
+                }
+            ),
+        )
+    ),
+    PreviewGroup(
+        id = "figure",
+        title = "Figure / 图片标题",
+        description = "独立段落中的图片自动转为 figure + figcaption",
+        items = listOf(
+            PreviewItem(
+                id = "figure_basic",
+                title = "基础 Figure",
+                content = {
+                    Markdown(
+                        markdown = """
+下面是一张独立的图片，会自动转换为 Figure：
+
+![Google Logo](https://www.google.com/images/branding/googlelogo/2x/googlelogo_color_272x92dp.png)
+
+图片上方会显示标题（来自 alt 文本）。
+                        """.trimIndent()
+                    )
+                }
+            ),
+            PreviewItem(
+                id = "figure_with_title",
+                title = "带 title 的 Figure",
+                content = {
+                    Markdown(
+                        markdown = """
+![风景照片](https://images.unsplash.com/photo-1472214103451-9374bd1c798e?w=400&h=250&fit=crop "美丽的自然风光")
+                        """.trimIndent()
+                    )
+                }
+            ),
+            PreviewItem(
+                id = "figure_inline_not_converted",
+                title = "行内图片不转换",
+                content = {
+                    Markdown(
+                        markdown = "行内图片 ![logo](https://www.google.com/favicon.ico) 不会转换为 Figure，因为它不是独立段落。"
                     )
                 }
             ),

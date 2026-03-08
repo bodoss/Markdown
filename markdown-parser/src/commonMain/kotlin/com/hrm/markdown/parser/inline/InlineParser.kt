@@ -255,7 +255,15 @@ private class InlineParserInstance(
                 c == '`' -> appendBackticks()
                 c == '<' -> appendAngleBracket()
                 c == '&' -> appendEntity()
-                c == '[' -> appendOpenBracket(isImage = false)
+                c == '[' -> {
+                    // 检测 Wiki 链接 [[...]]
+                    if (enableExtendedInline && scanner.peek(1) == '[') {
+                        val wikiResult = tryAppendWikiLink()
+                        if (!wikiResult) appendOpenBracket(isImage = false)
+                    } else {
+                        appendOpenBracket(isImage = false)
+                    }
+                }
                 c == '!' && scanner.peek(1) == '[' -> {
                     scanner.advance() // !
                     appendOpenBracket(isImage = true)
@@ -270,6 +278,7 @@ private class InlineParserInstance(
                 c == ':' && enableExtendedInline -> appendPossibleEmoji()
                 c == '{' && scanner.peek(1) == '%' && enableExtendedInline -> appendShortcode()
                 c == '>' && scanner.peek(1) == '!' && enableExtendedInline -> appendSpoiler()
+                c == '{' && enableExtendedInline && scanner.peek(1) != '%' -> appendPossibleRuby()
                 c == '\n' -> appendLineBreak()
                 else -> appendText()
             }
@@ -899,6 +908,106 @@ private class InlineParserInstance(
         return false
     }
 
+    /**
+     * 尝试解析 Wiki 链接 `[[target]]` 或 `[[target|label]]`。
+     * 成功则追加 WikiLink 节点并返回 true，否则不移动 scanner 位置并返回 false。
+     */
+    private fun tryAppendWikiLink(): Boolean {
+        val pos = scanner.pos
+        // 期望 [[
+        if (scanner.peek() != '[' || scanner.peek(1) != '[') return false
+        scanner.advance() // skip first [
+        scanner.advance() // skip second [
+
+        val startContent = scanner.pos
+        var pipePos = -1
+
+        // 寻找 ]] 闭合，同时记录 | 位置
+        while (!scanner.isAtEnd) {
+            val c = scanner.peek()
+            if (c == ']' && scanner.pos + 1 < input.length && input[scanner.pos + 1] == ']') {
+                // 找到 ]]
+                val content = input.substring(startContent, scanner.pos)
+                scanner.advance() // skip first ]
+                scanner.advance() // skip second ]
+
+                val target: String
+                val label: String?
+                if (pipePos >= 0) {
+                    target = input.substring(startContent, pipePos).trim()
+                    label = input.substring(pipePos + 1, scanner.pos - 2).trim()
+                } else {
+                    target = content.trim()
+                    label = null
+                }
+
+                if (target.isEmpty()) {
+                    // 空目标无效，回退
+                    scanner.pos = pos
+                    return false
+                }
+
+                appendLL(WikiLink(target = target, label = label))
+                return true
+            }
+            if (c == '|' && pipePos < 0) {
+                pipePos = scanner.pos
+            }
+            if (c == '\n') {
+                // Wiki 链接不跨行
+                break
+            }
+            scanner.advance()
+        }
+
+        // 未找到 ]]，回退
+        scanner.pos = pos
+        return false
+    }
+
+    /**
+     * 尝试解析 Ruby 注音 `{base|annotation}`。
+     * 格式：左花括号 + 基础文本 + | + 注音文本 + 右花括号。
+     * 不跨行，基础文本和注音文本均不能为空。
+     */
+    private fun appendPossibleRuby() {
+        val pos = scanner.pos
+        scanner.advance() // skip '{'
+
+        val startBase = scanner.pos
+        var pipePos = -1
+
+        while (!scanner.isAtEnd) {
+            val c = scanner.peek()
+            if (c == '}') {
+                if (pipePos < 0) {
+                    // 没有 |，不是 Ruby 语法
+                    break
+                }
+                val base = input.substring(startBase, pipePos).trim()
+                val annotation = input.substring(pipePos + 1, scanner.pos).trim()
+                if (base.isEmpty() || annotation.isEmpty()) {
+                    break
+                }
+                scanner.advance() // skip '}'
+                appendLL(RubyText(base = base, annotation = annotation))
+                return
+            }
+            if (c == '|' && pipePos < 0) {
+                pipePos = scanner.pos
+            }
+            if (c == '\n' || c == '{') {
+                // Ruby 不跨行，不嵌套
+                break
+            }
+            scanner.advance()
+        }
+
+        // 不是 Ruby 语法，回退并输出 { 为文本
+        scanner.pos = pos + 1
+        appendLL(Text("{"))
+    }
+
     private fun appendLineBreak() {
         val pos = scanner.pos
         scanner.advance()
@@ -934,6 +1043,7 @@ private class InlineParserInstance(
             if (enableExtendedInline && c == '=' && scanner.peek(1) == '=') break
             if (enableExtendedInline && c == '+' && scanner.peek(1) == '+') break
             if (enableExtendedInline && c == '{' && scanner.peek(1) == '%') break
+            if (enableExtendedInline && c == '{' && scanner.peek(1) != '%') break
             if (enableExtendedInline && c == '>' && scanner.peek(1) == '!') break
 
             // ASCII 表情检测（非 : 开头的，如 ;) B) XD 等）

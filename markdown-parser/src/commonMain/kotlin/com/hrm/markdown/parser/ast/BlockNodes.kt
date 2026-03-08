@@ -477,3 +477,29 @@ data class BibEntry(
     val key: String,
     val content: String,
 )
+
+/**
+ * Figure 块：独立段落中的图片，渲染为 `<figure>` + `<figcaption>`。
+ *
+ * 当一个段落仅包含单个图片节点时（Pandoc implicit_figures 语义），
+ * 由 [com.hrm.markdown.parser.block.postprocessors.FigureProcessor] 后处理器
+ * 将该段落替换为 Figure 节点。
+ *
+ * - 图片的 alt 文本作为 figcaption（标题）
+ * - 图片的 title 属性（如有）也可用于标题
+ */
+class Figure(
+    /** 图片 URL */
+    var imageUrl: String = "",
+    /** 图片标题（figcaption），通常来自 alt 文本 */
+    var caption: String = "",
+    /** 图片宽度（像素），null 表示未指定 */
+    var imageWidth: Int? = null,
+    /** 图片高度（像素），null 表示未指定 */
+    var imageHeight: Int? = null,
+    /** 自定义属性映射 */
+    var attributes: Map<String, String> = emptyMap(),
+) : LeafNode() {
+    override val literal: String get() = caption
+    override fun <R> accept(visitor: NodeVisitor<R>): R = visitor.visitFigure(this)
+}

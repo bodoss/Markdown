@@ -184,6 +184,44 @@ internal val cjkPreviewGroups = listOf(
             ),
         )
     ),
+    PreviewGroup(
+        id = "ruby_text",
+        title = "Ruby 注音",
+        description = "{漢字|かんじ} 中日文注音标注",
+        items = listOf(
+            PreviewItem(
+                id = "ruby_japanese",
+                title = "日文注音",
+                content = {
+                    Markdown(
+                        markdown = "{漢字|かんじ}の{読|よ}み{方|かた}を{学|まな}ぶ。"
+                    )
+                }
+            ),
+            PreviewItem(
+                id = "ruby_chinese",
+                title = "中文拼音",
+                content = {
+                    Markdown(
+                        markdown = "{中文|zhōngwén}是一种{美丽|měilì}的{语言|yǔyán}。"
+                    )
+                }
+            ),
+            PreviewItem(
+                id = "ruby_mixed",
+                title = "注音与普通文本混排",
+                content = {
+                    Markdown(
+                        markdown = """
+在学习日语时，{漢字|かんじ}的读法非常重要。
+
+例如：**{東京|とうきょう}** 是日本的首都，{大阪|おおさか}则是第二大城市。
+                        """.trimIndent()
+                    )
+                }
+            ),
+        )
+    ),
 )
 
 @Composable

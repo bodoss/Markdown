@@ -45,6 +45,7 @@ internal fun BlockRenderer(
         is ShortcodeBlock -> ShortcodeBlockRenderer(node, modifier)
         is TabBlock -> TabBlockRenderer(node, modifier)
         is BibliographyDefinition -> BibliographyDefinitionRenderer(node, modifier)
+        is Figure -> FigureRenderer(node, modifier)
         is FrontMatter -> { /* FrontMatter 通常不渲染 */ }
         is LinkReferenceDefinition -> { /* 引用定义不直接渲染 */ }
         is AbbreviationDefinition -> { /* 缩写定义不直接渲染 */ }

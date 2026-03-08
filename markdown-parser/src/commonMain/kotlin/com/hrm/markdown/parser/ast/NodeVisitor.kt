@@ -70,6 +70,9 @@ interface NodeVisitor<R> {
     fun visitBibliographyDefinition(node: BibliographyDefinition): R
     fun visitCitationReference(node: CitationReference): R
     fun visitSpoiler(node: Spoiler): R
+    fun visitWikiLink(node: WikiLink): R
+    fun visitRubyText(node: RubyText): R
+    fun visitFigure(node: Figure): R
 }
 
 /**
@@ -139,4 +142,7 @@ abstract class DefaultNodeVisitor<R>(private val defaultValue: R) : NodeVisitor<
     override fun visitBibliographyDefinition(node: BibliographyDefinition): R = defaultValue
     override fun visitCitationReference(node: CitationReference): R = defaultValue
     override fun visitSpoiler(node: Spoiler): R = defaultValue
+    override fun visitWikiLink(node: WikiLink): R = defaultValue
+    override fun visitRubyText(node: RubyText): R = defaultValue
+    override fun visitFigure(node: Figure): R = defaultValue
 }

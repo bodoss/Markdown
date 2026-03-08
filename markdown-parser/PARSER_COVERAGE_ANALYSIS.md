@@ -337,7 +337,17 @@
 
 > **备注**: `TabBlockStarter`（优先级 295）检测 `=== "Title"` 语法启动 TabBlock。`BlockParser` 通过缩进续行逻辑管理 TabItem 的内容归属，空行计数控制 TabItem 终止。渲染器以 Material 风格标签栏 + 内容面板呈现，支持交互式标签切换。
 
-**覆盖率**: 78/78 (100%)
+#### Figure / 图片标题（扩展）
+- ✅ 独立段落中的单个图片自动转换为 `Figure` 节点
+- ✅ 图片 title 优先作为 figcaption，fallback 到 alt 文本
+- ✅ 保留图片宽高和属性信息
+- ✅ `Figure` AST 节点（LeafNode，携带 `imageUrl`、`caption`、`imageWidth`、`imageHeight`、`attributes`）
+- ✅ 仅转换独立段落中的单个图片（多图片或含文本的段落不转换）
+- ✅ 递归处理容器节点（BlockQuote、ListItem 等内部的独立图片也转换）
+
+> **备注**: `FigureProcessor` 后处理器（优先级 450）实现 Pandoc implicit_figures 语义。在 HTML 过滤（400）之后运行，遍历所有 Paragraph 节点，过滤掉 SoftLineBreak 和空白 Text 后，如果恰好剩余一个 Image 节点，则替换为 Figure 节点。渲染器以居中图片 + 斜体 caption 样式呈现。
+
+**覆盖率**: 85/85 (100%)
 
 ---
 
@@ -595,7 +605,27 @@
 
 > **备注**: `InlineParser.appendSpoiler()` 在 `>!` 开始标记处触发，扫描到 `!<` 结束标记生成 `Spoiler` 容器节点。渲染器使用 `theme.spoilerColor` 同时设置文字颜色和背景色，实现视觉遮挡效果。
 
-**覆盖率**: 38/38 (100%)
+#### Wiki 链接（扩展）
+- ✅ `[[page]]` 基础 Wiki 链接
+- ✅ `[[page|显示文本]]` 带自定义显示文本的 Wiki 链接
+- ✅ 链接目标支持空格和 CJK 字符
+- ✅ `WikiLink` AST 节点（LeafNode，携带 `target` 和可选 `label`）
+- ✅ 不跨行（遇到换行终止）
+- ✅ 空 `[[]]` 不解析（优雅降级）
+
+> **备注**: `InlineParser.tryAppendWikiLink()` 在检测到 `[[` 时触发，扫描到 `]]` 闭合标记生成 `WikiLink` 叶节点。支持 `|` 分隔的可选显示文本。渲染器使用 `LinkAnnotation.Clickable` 以 "wikilink" 标签触发 `onLinkClick` 回调。
+
+#### Ruby 注音（扩展）
+- ✅ `{漢字|かんじ}` 基础 Ruby 注音标注
+- ✅ 中文拼音标注 `{中文|zhōngwén}`
+- ✅ `RubyText` AST 节点（LeafNode，携带 `base` 和 `annotation`）
+- ✅ 不跨行（遇到换行终止）
+- ✅ 空 base 或空 annotation 不解析
+- ✅ 不与 `{%` 短代码语法冲突
+
+> **备注**: `InlineParser.appendPossibleRuby()` 在检测到 `{`（且下一字符非 `%`）时触发，扫描到 `}` 并检查 `|` 分隔符。渲染器通过 `InlineTextContent` 机制渲染为上方注音 + 下方基础文字的 Column 布局。
+
+**覆盖率**: 50/50 (100%)
 
 ---
 
@@ -770,7 +800,7 @@
 | 7 | 表格（GFM） | 11/11 | 0 | 100% |
 | 8 | HTML 块 | 10/10 | 0 | 100% |
 | 9 | 链接引用定义 | 12/12 | 0 | 100% |
-| 10 | 块级扩展 | 78/78 | 0 | 100% |
+| 10 | 块级扩展 | 85/85 | 0 | 100% |
 | 11 | 强调 | 13/13 | 0 | 100% |
 | 12 | 删除线（GFM） | 4/4 | 0 | 100% |
 | 13 | 行内代码 | 8/8 | 0 | 100% |
@@ -779,13 +809,13 @@
 | 16 | 行内 HTML | 8/8 | 0 | 100% |
 | 17 | 转义与实体 | 10/10 | 0 | 100% |
 | 18 | 换行 | 5/5 | 0 | 100% |
-| 19 | 行内扩展 | 38/38 | 0 | 100% |
+| 19 | 行内扩展 | 50/50 | 0 | 100% |
 | 20 | 流式解析引擎 | 27/27 | 0 | 100% |
 | 21 | 字符与编码 | 10/10 | 0 | 100% |
 | 22 | HTML 生成器 | 12/12 | 0 | 100% |
 | 23 | 语法验证/Linting | 19/19 | 0 | 100% |
 | 24 | 短代码（Shortcodes） | 8/8 | 0 | 100% |
-| | **总计** | **391/391** | **0** | **100%** |
+| | **总计** | **410/410** | **0** | **100%** |
 
 ---
 
@@ -889,16 +919,12 @@ val html = HtmlRenderer.renderMarkdown(input, flavour = CommonMarkFlavour)
 | 优先级 | 特性 | 说明 |
 |--------|------|------|
 | **P3** | 解析缓存 | 对相同 Markdown 文本缓存解析后的 AST 节点树，避免重复解析，降低 CMS/文档系统等高频场景的 CPU/内存消耗 |
-| **P3** | HTML 反向解析 | 将 HTML 文本反向解析为 Markdown（保留标题、列表、链接、图片等基础格式），满足富文本编辑器内容导入/迁移场景 |
+| **P3** | HTML 反向解析 | 将 HTML 文本反向解析为 Markdown（保留标题、列表、链接、图片等基础格式），满足富文本编辑器内容导入/迁移场景 |xz
 
 ### 四、特殊场景适配
 
-> **备注**: 无障碍支持（WCAG）已实现，详见第 23 章「语法验证/Linting — WCAG 无障碍检测」。
+> **备注**: 无障碍支持（WCAG）已实现，详见第 23 章「语法验证/Linting — WCAG 无障碍检测」。Wiki 链接、Figure 图片标题、Ruby 注音已实现，详见第 19 章「行内扩展」和第 10 章「块级扩展」。目录自动编号在渲染器层面实现（`MarkdownConfig.enableHeadingNumbering`）。
 
 | 优先级 | 特性 | 语法示例 | 说明 |
 |--------|------|----------|------|
-| **P3** | Wiki 链接 | `[[page]]` / `[[page\|显示文本]]` | Obsidian 风格内部链接语法，适用于知识库/笔记场景 |
-| **P3** | Figure / 图片标题 | 独立段落中的图片 | 将独立段落中的图片渲染为 `<figure>` + `<figcaption>`（Pandoc implicit_figures） |
-| **P4** | Ruby 注音 | `{漢字\|かんじ}` | 中日文注音标注，渲染为 `<ruby>` HTML 元素 |
-| **P4** | 目录自动编号 | 标题编号 `1.1`, `1.2` | 为标题自动添加层级编号（渲染器层面） |
 | **P4** | 嵌入/Transclusion | `![[other-file]]` | 嵌入其他 Markdown 文件内容（Obsidian 风格） |

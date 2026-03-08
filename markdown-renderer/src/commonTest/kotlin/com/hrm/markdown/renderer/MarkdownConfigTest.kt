@@ -106,4 +106,37 @@ class MarkdownConfigTest {
         assertTrue(modified.enableLinting)
         assertFalse(modified.enableAsciiEmoticons)
     }
+
+    @Test
+    fun should_disable_heading_numbering_by_default() {
+        val config = MarkdownConfig()
+        assertFalse(config.enableHeadingNumbering)
+    }
+
+    @Test
+    fun should_enable_heading_numbering() {
+        val config = MarkdownConfig(enableHeadingNumbering = true)
+        assertTrue(config.enableHeadingNumbering)
+    }
+
+    @Test
+    fun should_copy_with_heading_numbering() {
+        val base = MarkdownConfig.Default
+        val modified = base.copy(enableHeadingNumbering = true)
+        assertTrue(modified.enableHeadingNumbering)
+        assertFalse(modified.enableLinting)
+        assertSame(ExtendedFlavour, modified.flavour)
+    }
+
+    @Test
+    fun should_include_heading_numbering_in_equality() {
+        val config1 = MarkdownConfig(enableHeadingNumbering = true)
+        val config2 = MarkdownConfig(enableHeadingNumbering = false)
+        assertNotEquals(config1, config2)
+    }
+
+    @Test
+    fun should_default_singleton_not_have_heading_numbering() {
+        assertFalse(MarkdownConfig.Default.enableHeadingNumbering)
+    }
 }

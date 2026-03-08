@@ -38,10 +38,18 @@ import com.hrm.markdown.parser.flavour.MarkdownFlavour
  * )
  * ```
  *
+ * // 启用标题自动编号
+ * Markdown(
+ *     markdown = "# Intro\n## Section\n## Section 2",
+ *     config = MarkdownConfig(enableHeadingNumbering = true),
+ * )
+ * ```
+ *
  * @param flavour Markdown 方言，控制支持的语法特性。默认为 [ExtendedFlavour]（包含所有扩展）。
  * @param customEmojiMap 自定义 Emoji 别名映射（shortcode → unicode），默认为空。
  * @param enableAsciiEmoticons 是否启用 ASCII 表情自动转换（如 `:)` → 😊），默认关闭。
  * @param enableLinting 是否启用语法验证/Linting，默认关闭。
+ * @param enableHeadingNumbering 是否启用标题自动编号（如 1, 1.1, 1.1.1），默认关闭。
  */
 @Immutable
 data class MarkdownConfig(
@@ -49,6 +57,7 @@ data class MarkdownConfig(
     val customEmojiMap: Map<String, String> = emptyMap(),
     val enableAsciiEmoticons: Boolean = false,
     val enableLinting: Boolean = false,
+    val enableHeadingNumbering: Boolean = false,
 ) {
     companion object {
         /** 默认配置：ExtendedFlavour，全功能。 */

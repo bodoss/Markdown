@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
@@ -413,6 +414,52 @@ private fun AnnotatedString.Builder.renderInlineNode(
             }
         }
 
+        is WikiLink -> {
+            val linkAnnotation = LinkAnnotation.Clickable(
+                tag = "wikilink",
+                styles = TextLinkStyles(
+                    style = SpanStyle(
+                        color = theme.linkColor,
+                        textDecoration = TextDecoration.Underline,
+                    ),
+                ),
+                linkInteractionListener = {
+                    onLinkClick?.invoke(node.target)
+                },
+            )
+            withLink(linkAnnotation) {
+                append(node.label ?: node.target)
+            }
+        }
+
+        is RubyText -> {
+            // 渲染 Ruby 注音：使用 InlineTextContent 机制
+            val id = "ruby_${node.hashCode()}"
+            val fontSize = theme.bodyStyle.fontSize.value
+            // 估算宽度：基础文本字符数 * 字体大小
+            val baseWidth = node.base.sumOf { ch ->
+                if (ch.code > 0x7F) 12 else 7
+            }.toFloat() / 10f * (fontSize / 16f)
+            val placeholderWidth = (baseWidth + 2f).sp
+            // 高度需要额外空间放置注音
+            val placeholderHeight = (fontSize * 2.0f).sp
+
+            appendInlineContent(id, node.base)
+            inlineContents[id] = InlineTextContent(
+                placeholder = Placeholder(
+                    width = placeholderWidth,
+                    height = placeholderHeight,
+                    placeholderVerticalAlign = PlaceholderVerticalAlign.TextCenter,
+                ),
+            ) {
+                RubyTextContent(
+                    base = node.base,
+                    annotation = node.annotation,
+                    theme = theme,
+                )
+            }
+        }
+
         else -> {
             if (node is ContainerNode) {
                 renderInlineChildren(node.children, theme, inlineContents, onLinkClick, latexMeasurer, density)
@@ -599,4 +646,35 @@ private fun SpoilerContent(
         modifier = Modifier.clickable { revealed = !revealed },
         style = theme.bodyStyle,
     )
+}
+
+/**
+ * Ruby 注音内容 Composable。
+ * 将基础文本和注音文本垂直排列：注音在上，基础文本在下。
+ */
+@Composable
+private fun RubyTextContent(
+    base: String,
+    annotation: String,
+    theme: MarkdownTheme,
+) {
+    androidx.compose.foundation.layout.Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // 注音文本（小字号，在上方）
+        BasicText(
+            text = annotation,
+            style = theme.bodyStyle.copy(
+                fontSize = theme.bodyStyle.fontSize * 0.5f,
+                lineHeight = theme.bodyStyle.fontSize * 0.6f,
+            ),
+        )
+        // 基础文本
+        BasicText(
+            text = base,
+            style = theme.bodyStyle.copy(
+                lineHeight = theme.bodyStyle.fontSize * 1.2f,
+            ),
+        )
+    }
 }

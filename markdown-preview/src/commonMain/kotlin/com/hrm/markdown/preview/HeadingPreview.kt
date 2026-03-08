@@ -2,6 +2,7 @@ package com.hrm.markdown.preview
 
 import androidx.compose.runtime.Composable
 import com.hrm.markdown.renderer.Markdown
+import com.hrm.markdown.renderer.MarkdownConfig
 
 internal val headingPreviewGroups = listOf(
     PreviewGroup(
@@ -98,6 +99,78 @@ internal val headingPreviewGroups = listOf(
 ##### 五级标题
 ###### 六级标题
                         """.trimIndent()
+                    )
+                }
+            ),
+        )
+    ),
+    PreviewGroup(
+        id = "heading_numbering",
+        title = "目录自动编号",
+        description = "enableHeadingNumbering 自动为标题添加层级编号",
+        items = listOf(
+            PreviewItem(
+                id = "numbering_basic",
+                title = "基础标题编号",
+                content = {
+                    Markdown(
+                        markdown = """
+# 概述
+
+## 安装
+
+### 环境要求
+
+### 安装步骤
+
+## 使用指南
+
+### 快速开始
+
+### 进阶用法
+
+# 参考
+                        """.trimIndent(),
+                        config = MarkdownConfig(enableHeadingNumbering = true),
+                    )
+                }
+            ),
+            PreviewItem(
+                id = "numbering_comparison",
+                title = "编号 vs 无编号对比",
+                content = {
+                    Markdown(
+                        markdown = """
+# 第一章
+
+## 第一节
+
+## 第二节
+
+### 小节
+
+# 第二章
+
+## 第一节
+                        """.trimIndent(),
+                        config = MarkdownConfig(enableHeadingNumbering = true),
+                    )
+                }
+            ),
+            PreviewItem(
+                id = "numbering_disabled",
+                title = "禁用编号（默认）",
+                content = {
+                    Markdown(
+                        markdown = """
+# 概述
+
+## 安装
+
+### 环境要求
+
+## 使用指南
+                        """.trimIndent(),
                     )
                 }
             ),

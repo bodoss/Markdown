@@ -81,7 +81,7 @@ val previewCategories: List<PreviewCategory> = listOf(
     PreviewCategory(
         id = "headings",
         title = "标题",
-        description = "ATX 标题（1-6 级）",
+        description = "ATX 标题（1-6 级）、目录自动编号",
         icon = "📑",
         groups = headingPreviewGroups
     ),
@@ -123,7 +123,7 @@ val previewCategories: List<PreviewCategory> = listOf(
     PreviewCategory(
         id = "links_images",
         title = "链接与图片",
-        description = "链接、自动链接、图片、图片尺寸与属性",
+        description = "链接、自动链接、Wiki 链接、图片、Figure 图片标题",
         icon = "🔗",
         groups = linkImagePreviewGroups
     ),
@@ -165,7 +165,7 @@ val previewCategories: List<PreviewCategory> = listOf(
     PreviewCategory(
         id = "cjk",
         title = "中文本地化优化",
-        description = "全角标点定界符识别、CJK 场景下的强调解析优化",
+        description = "全角标点定界符识别、CJK 强调解析优化、Ruby 注音标注",
         icon = "🇨🇳",
         groups = cjkPreviewGroups
     ),
