@@ -148,6 +148,20 @@ val previewCategories: List<PreviewCategory> = listOf(
         icon = "📄",
         groups = paginationPreviewGroups
     ),
+    PreviewCategory(
+        id = "linting",
+        title = "语法验证/Linting",
+        description = "解析时检测无效语法并返回诊断信息：标题层级跳跃、重复标题 ID、无效脚注引用等",
+        icon = "🔍",
+        groups = lintingPreviewGroups
+    ),
+    PreviewCategory(
+        id = "cjk",
+        title = "中文本地化优化",
+        description = "全角标点定界符识别、CJK 场景下的强调解析优化",
+        icon = "🇨🇳",
+        groups = cjkPreviewGroups
+    ),
 )
 
 /**

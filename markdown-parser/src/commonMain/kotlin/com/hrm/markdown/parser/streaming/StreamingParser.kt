@@ -5,6 +5,7 @@ import com.hrm.markdown.parser.core.SourceText
 import com.hrm.markdown.parser.flavour.ExtendedFlavour
 import com.hrm.markdown.parser.flavour.MarkdownFlavour
 import com.hrm.markdown.parser.incremental.IncrementalEngine
+import com.hrm.markdown.parser.lint.LintingPostProcessor
 import com.hrm.markdown.parser.log.HLog
 
 /**
@@ -40,12 +41,13 @@ class StreamingParser(
     flavour: MarkdownFlavour = ExtendedFlavour,
     customEmojiMap: Map<String, String> = emptyMap(),
     enableAsciiEmoticons: Boolean = false,
+    lintingProcessor: LintingPostProcessor? = null,
 ) {
     companion object {
         private const val TAG = "StreamingParser"
     }
 
-    private val engine = IncrementalEngine(flavour, customEmojiMap, enableAsciiEmoticons)
+    private val engine = IncrementalEngine(flavour, customEmojiMap, enableAsciiEmoticons, lintingProcessor = lintingProcessor)
 
     /** 当前文档 AST */
     val document: Document get() = engine.document

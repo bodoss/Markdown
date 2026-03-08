@@ -6,6 +6,8 @@ import com.hrm.markdown.parser.flavour.ExtendedFlavour
 import com.hrm.markdown.parser.flavour.MarkdownFlavour
 import com.hrm.markdown.parser.incremental.EditOperation
 import com.hrm.markdown.parser.incremental.IncrementalEngine
+import com.hrm.markdown.parser.lint.DiagnosticResult
+import com.hrm.markdown.parser.lint.LintingPostProcessor
 import com.hrm.markdown.parser.log.HLog
 import com.hrm.markdown.parser.streaming.StreamingParser
 
@@ -52,7 +54,16 @@ import com.hrm.markdown.parser.streaming.StreamingParser
  * val doc = parser.document // 增量更新后的 AST
  * ```
  *
+ * ## 语法验证（Linting）
+ * ```kotlin
+ * val parser = MarkdownParser(enableLinting = true)
+ * val doc = parser.parse("# Title\n\n### Skipped h2\n\n[^missing]")
+ * val diagnostics = parser.diagnostics
+ * println(diagnostics) // 输出标题层级跳跃和无效脚注引用的诊断
+ * ```
+ *
  * @param flavour Markdown 方言，控制支持的语法特性。默认为 [ExtendedFlavour]（包含所有扩展）。
+ * @param enableLinting 是否启用语法验证/Linting。默认为 false。
  */
 class MarkdownParser(
     val flavour: MarkdownFlavour = ExtendedFlavour,
@@ -60,9 +71,21 @@ class MarkdownParser(
     val customEmojiMap: Map<String, String> = emptyMap(),
     /** 是否启用 ASCII 表情自动转换（如 :) → 😊） */
     val enableAsciiEmoticons: Boolean = false,
+    /** 是否启用语法验证/Linting */
+    val enableLinting: Boolean = false,
 ) {
-    private val streamingParser = StreamingParser(flavour, customEmojiMap, enableAsciiEmoticons)
-    private val editEngine = IncrementalEngine(flavour, customEmojiMap, enableAsciiEmoticons)
+    private val lintingProcessor: LintingPostProcessor? = if (enableLinting) LintingPostProcessor() else null
+    private val streamingParser = StreamingParser(flavour, customEmojiMap, enableAsciiEmoticons, lintingProcessor)
+    private val editEngine = IncrementalEngine(flavour, customEmojiMap, enableAsciiEmoticons, lintingProcessor = lintingProcessor)
+
+    /**
+     * 语法验证诊断结果。
+     *
+     * 仅在 `enableLinting = true` 时有内容。
+     * 每次 [parse]、[endStream] 或编辑操作后自动更新。
+     */
+    val diagnostics: DiagnosticResult
+        get() = lintingProcessor?.result ?: DiagnosticResult()
 
     /** 是否处于编辑模式（通过 edit API 操作过） */
     private var inEditMode = false

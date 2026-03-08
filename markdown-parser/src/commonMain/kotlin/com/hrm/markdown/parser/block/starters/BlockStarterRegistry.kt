@@ -31,19 +31,42 @@ import com.hrm.markdown.parser.core.LineCursor
 class BlockStarterRegistry {
     private val starters = mutableListOf<BlockStarter>()
     private var sorted = false
+    private var frozen = false
+
+    /**
+     * 冻结注册表，禁止后续修改。
+     *
+     * 冻结后调用 [register] 或 [registerAll] 将抛出 [IllegalStateException]。
+     * 此方法用于保护缓存中的共享实例不被意外修改。
+     */
+    fun freeze() {
+        ensureSorted()
+        frozen = true
+    }
+
+    /**
+     * 注册表是否已冻结。
+     */
+    val isFrozen: Boolean get() = frozen
 
     /**
      * 注册一个块级开启器。
+     *
+     * @throws IllegalStateException 如果注册表已被冻结
      */
     fun register(starter: BlockStarter) {
+        check(!frozen) { "BlockStarterRegistry is frozen and cannot be modified" }
         starters.add(starter)
         sorted = false
     }
 
     /**
      * 注册多个块级开启器。
+     *
+     * @throws IllegalStateException 如果注册表已被冻结
      */
     fun registerAll(vararg starters: BlockStarter) {
+        check(!frozen) { "BlockStarterRegistry is frozen and cannot be modified" }
         this.starters.addAll(starters)
         sorted = false
     }

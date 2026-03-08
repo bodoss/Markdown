@@ -601,24 +601,35 @@ private class InlineParserInstance(
         val charBefore = if (pos > 0) input[pos - 1] else '\n'
         val charAfter = if (scanner.pos < input.length) input[scanner.pos] else '\n'
 
+        // ── CJK 本地化优化 ──
+        // 将全角标点视为等同于 Unicode 标点进行 flanking 判断，确保：
+        // - `*中文*。` 中 `*` 在全角句号前正确识别为右侧 flanking
+        // - `「*中文*」` 中 `*` 在全角引号边界正确开启/关闭强调
+        // - `*中文*，继续` 等场景正常工作
+        // 同时将全角空格（\u3000）视为空白，避免在中文排版中被误判为非空白。
+        val beforeIsPunct = CharacterUtils.isUnicodePunctuation(charBefore) ||
+                CharacterUtils.isFullWidthPunctuation(charBefore)
+        val afterIsPunct = CharacterUtils.isUnicodePunctuation(charAfter) ||
+                CharacterUtils.isFullWidthPunctuation(charAfter)
+
         val leftFlanking = !CharacterUtils.isUnicodeWhitespace(charAfter) &&
-                (!CharacterUtils.isUnicodePunctuation(charAfter) ||
+                (!afterIsPunct ||
                         CharacterUtils.isUnicodeWhitespace(charBefore) ||
-                        CharacterUtils.isUnicodePunctuation(charBefore))
+                        beforeIsPunct)
 
         val rightFlanking = !CharacterUtils.isUnicodeWhitespace(charBefore) &&
-                (!CharacterUtils.isUnicodePunctuation(charBefore) ||
+                (!beforeIsPunct ||
                         CharacterUtils.isUnicodeWhitespace(charAfter) ||
-                        CharacterUtils.isUnicodePunctuation(charAfter))
+                        afterIsPunct)
 
         val canOpen = if (delimChar == '_') {
-            leftFlanking && (!rightFlanking || CharacterUtils.isUnicodePunctuation(charBefore))
+            leftFlanking && (!rightFlanking || beforeIsPunct)
         } else {
             leftFlanking
         }
 
         val canClose = if (delimChar == '_') {
-            rightFlanking && (!leftFlanking || CharacterUtils.isUnicodePunctuation(charAfter))
+            rightFlanking && (!leftFlanking || afterIsPunct)
         } else {
             rightFlanking
         }

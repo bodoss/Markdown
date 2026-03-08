@@ -1,6 +1,7 @@
 package com.hrm.markdown.parser.ast
 
 import com.hrm.markdown.parser.core.Attributes
+import com.hrm.markdown.parser.lint.DiagnosticResult
 
 /**
  * 文档的根节点。
@@ -14,6 +15,15 @@ class Document : ContainerNode() {
 
     /** 解析过程中收集的缩写定义。 */
     val abbreviationDefinitions: MutableMap<String, AbbreviationDefinition> = mutableMapOf()
+
+    /**
+     * 语法验证/Linting 诊断结果。
+     *
+     * 当 [com.hrm.markdown.parser.MarkdownParser] 启用 `enableLinting = true` 时，
+     * 解析完成后此字段包含检测到的语法问题（错误、警告、建议）。
+     * 默认为空结果（无诊断信息）。
+     */
+    var diagnostics: DiagnosticResult = DiagnosticResult()
 
     override fun <R> accept(visitor: NodeVisitor<R>): R = visitor.visitDocument(this)
 }

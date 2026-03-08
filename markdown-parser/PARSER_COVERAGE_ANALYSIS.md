@@ -618,7 +618,15 @@
 - ✅ Unicode 标点符号识别（用于强调定界符规则）
 - ✅ Unicode 空白字符识别（用于强调定界符规则）
 
-**覆盖率**: 6/6 (100%)
+#### CJK / 中文本地化优化
+- ✅ CJK 字符检测（CJK Unified Ideographs、Extension A、Compatibility、Hiragana、Katakana、Bopomofo、Hangul）
+- ✅ 全角标点符号识别（`。，、；：？！""''【】《》（）—…·` 及 `FF01-FF5E` 全角 ASCII 标点）
+- ✅ 全角标点纳入 flanking delimiter run 规则（`*中文*。` 正确解析为斜体）
+- ✅ 中文空格视为普通空格（不影响定界符判定）
+
+> **备注**: `CharacterUtils` 扩展了 `isCJK()`、`isFullWidthPunctuation()`、`isCJKOrFullWidthPunctuation()` 方法。`InlineParser.appendDelimiterRun()` 将全角标点视为等效于 Unicode 标点，确保 `*中文*。`、`**粗体**，` 等场景正确解析强调。
+
+**覆盖率**: 10/10 (100%)
 
 ---
 
@@ -641,6 +649,36 @@
 > **备注**: `HtmlRenderer` 实现 `NodeVisitor<Unit>` 接口，通过 Visitor 模式遍历 AST 并生成标准 HTML。支持服务端 SSR 和 HTML 导出场景。参考 JetBrains Markdown 的 `HtmlGenerator` API 设计。
 
 **覆盖率**: 12/12 (100%)
+
+---
+
+## 23. 语法验证 / Linting
+
+### ✅ 已支持
+
+#### 诊断模型
+- ✅ `DiagnosticSeverity` 三级严重度（ERROR / WARNING / INFO）
+- ✅ `DiagnosticCode` 枚举（8 种诊断码）
+- ✅ `Diagnostic` 数据类（携带行号、严重度、诊断码、消息）
+- ✅ `DiagnosticResult` 集合类（支持按严重度过滤、排序、toString 输出）
+- ✅ 解析结果通过 `Document.diagnostics` 附带诊断信息
+
+#### 检测规则
+- ✅ 标题层级跳跃检测（如 h1 直接跳到 h3）
+- ✅ 重复标题 ID 检测（独立计算 slug，不依赖 HeadingIdProcessor 的去重结果）
+- ✅ 无效脚注引用检测（引用了不存在的脚注定义）
+- ✅ 未使用脚注定义检测（定义了但从未引用）
+- ✅ 空链接目标检测（`[text]()`）
+- ✅ 图片缺失 alt 文本检测
+
+#### 集成方式
+- ✅ `MarkdownParser(enableLinting = true)` 开关控制
+- ✅ `LintingPostProcessor`（优先级 900）作为后处理器运行
+- ✅ 全量解析、增量编辑均附带诊断结果
+
+> **备注**: `LintingPostProcessor` 实现 `PostProcessor` 接口，在所有其他后处理器完成后运行。通过递归遍历 AST 检测各类问题，诊断结果同时附加到 `Document.diagnostics` 和 `MarkdownParser.diagnostics`。
+
+**覆盖率**: 14/14 (100%)
 
 ---
 
@@ -668,9 +706,10 @@
 | 18 | 换行 | 5/5 | 0 | 100% |
 | 19 | 行内扩展 | 33/33 | 0 | 100% |
 | 20 | 流式解析引擎 | 27/27 | 0 | 100% |
-| 21 | 字符与编码 | 6/6 | 0 | 100% |
+| 21 | 字符与编码 | 10/10 | 0 | 100% |
 | 22 | HTML 生成器 | 12/12 | 0 | 100% |
-| | **总计** | **334/334** | **0** | **100%** |
+| 23 | 语法验证/Linting | 14/14 | 0 | 100% |
+| | **总计** | **356/356** | **0** | **100%** |
 
 ---
 
@@ -705,6 +744,17 @@ Results are written to `/tmp/commonmark-results.txt`.
 Extended inline syntax (disabled in CommonMark):
 - `~~strikethrough~~`, `==highlight==`, `++insert++`
 - `^superscript^`, `$math$`, `:emoji:`
+
+### Flavour 配置缓存
+
+- ✅ `FlavourCache` 单例缓存（以 `MarkdownFlavour` 实例身份标识为 key）
+- ✅ `BlockStarter` 列表不可变快照缓存
+- ✅ `PostProcessor` 列表不可变快照缓存
+- ✅ `BlockStarterRegistry` 预构建并冻结（`freeze()`），避免重复排序
+- ✅ `BlockStarterRegistry.freeze()` 冻结机制，防止共享实例被意外修改
+- ✅ `invalidate(flavour)` / `clearAll()` 手动缓存管理
+
+> **备注**: `FlavourCache.of(flavour)` 为 `object` 单例方言（CommonMarkFlavour、GFMFlavour、ExtendedFlavour）全局缓存一份配置。`IncrementalEngine` 通过 `FlavourCache` 获取缓存的 `BlockStarterRegistry`（已冻结）和 `PostProcessorRegistry`（每次新建），消除高频解析场景下的重复初始化开销。
 
 Usage:
 ```kotlin
@@ -753,9 +803,6 @@ val html = HtmlRenderer.renderMarkdown(input, flavour = CommonMarkFlavour)
 
 | 优先级 | 特性 | 说明 |
 |--------|------|------|
-| **P1** | 语法验证/Linting | 解析时检测无效语法并返回诊断信息：未闭合围栏代码块/行内代码、重复标题 ID、无效脚注引用、标题层级不连续（如 h1 直接跳到 h3）等。解析结果附带 errors/warnings 列表，帮助用户排查语法错误 |
-| **P1** | 中文本地化优化 | 针对中文等非英文场景优化解析规则：全角标点后的定界符识别（如 `*中文*。` 正确解析斜体）、中文词边界的强调规则（避免 `我*的*文档` 误解析）、中文空格视为普通空格而非分隔符 |
-| **P2** | Flavour 配置缓存 | 对 Flavour 配置（BlockStarter 列表、PostProcessor 列表、FlavourOptions）进行缓存，避免多次创建解析器时重复初始化，降低高频调用场景的开销。（来源：FLAVOUR_SYSTEM_SUMMARY Phase 4） |
 | **P2** | 自定义语法规则/短代码 | 允许用户注册自定义短代码解析器，如 `{% youtube 123456 %}` 解析为嵌入代码。极大提升解析器扩展性，适配用户个性化场景（自定义组件、业务专属语法） |
 | **P2** | 多规范兼容 | 支持配置解析规范（CommonMark 0.30/0.31、GFM 0.29/最新、Markdown Extra、Pandoc 子集），适配不同平台（GitHub/GitLab/Notion）的语法差异 |
 | **P2** | 代码块增强 | `` ```python {hl_lines="1 3-5" linenums=true} `` — 解析代码块 info string 中的行号、行高亮等属性参数，生成 AST 节点携带额外元数据，满足技术文档代码展示需求 |

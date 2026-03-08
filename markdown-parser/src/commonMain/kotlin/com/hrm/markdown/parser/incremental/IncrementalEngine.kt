@@ -9,8 +9,10 @@ import com.hrm.markdown.parser.block.postprocessors.PostProcessorRegistry
 import com.hrm.markdown.parser.block.starters.BlockStarterRegistry
 import com.hrm.markdown.parser.core.SourceText
 import com.hrm.markdown.parser.flavour.ExtendedFlavour
+import com.hrm.markdown.parser.flavour.FlavourCache
 import com.hrm.markdown.parser.flavour.MarkdownFlavour
 import com.hrm.markdown.parser.inline.InlineParser
+import com.hrm.markdown.parser.lint.LintingPostProcessor
 import com.hrm.markdown.parser.log.HLog
 import com.hrm.markdown.parser.streaming.InlineAutoCloser
 
@@ -36,23 +38,26 @@ class IncrementalEngine(
     private val customEmojiMap: Map<String, String> = emptyMap(),
     private val enableAsciiEmoticons: Boolean = false,
     postProcessors: PostProcessorRegistry? = null,
+    private val lintingProcessor: LintingPostProcessor? = null,
 ) {
     companion object {
         private const val TAG = "IncrementalEngine"
     }
+
+    /** 使用 FlavourCache 缓存方言配置，避免重复初始化。 */
+    private val flavourCache = FlavourCache.of(flavour)
+
     private val postProcessors: PostProcessorRegistry = postProcessors 
-        ?: PostProcessorRegistry().apply {
-            flavour.postProcessors.forEach { register(it) }
+        ?: flavourCache.newPostProcessorRegistry().apply {
+            lintingProcessor?.let { register(it) }
         }
     
     /**
-     * 构建 BlockStarter 注册表。
-     * 所有 BlockStarter（包括 FrontMatterStarter）均由 Flavour 静态提供。
+     * 获取缓存的 BlockStarter 注册表。
+     * 利用 [FlavourCache] 避免每次解析都重新创建和排序。
      */
     private fun buildRegistry(source: SourceText): BlockStarterRegistry {
-        return BlockStarterRegistry().apply {
-            flavour.blockStarters.forEach { register(it) }
-        }
+        return flavourCache.blockStarterRegistry
     }
     // ────── 状态 ──────
     private val fullText = StringBuilder()
@@ -234,6 +239,9 @@ class IncrementalEngine(
         // 后处理
         postProcessors.processAll(newDoc)
 
+        // 将 Linting 诊断结果附加到 Document
+        lintingProcessor?.let { newDoc.diagnostics = it.result }
+
         _document = newDoc
         lastParsedLength = newText.length
         return _document
@@ -256,6 +264,9 @@ class IncrementalEngine(
 
         // 后处理统一由 Engine 控制
         postProcessors.processAll(_document)
+
+        // 将 Linting 诊断结果附加到 Document
+        lintingProcessor?.let { _document.diagnostics = it.result }
 
         stableBlockCount = _document.children.size
         stableEndLine = _sourceText.lineCount
